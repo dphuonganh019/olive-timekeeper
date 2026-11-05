@@ -82,7 +82,16 @@ const DEFAULT_SETTINGS = () => ({
     trackStart: '05:30',     // start waiting for check-in on each workday
     trackEnd: '20:00',       // stop tracking if you left the office and did not come back
   },
-  salaries: [],              // {id, from:'YYYY-MM-DD', amount (gross monthly pay), otBase (contract base salary, the OT basis), status:'probation'|'official'}
+  // Set once in Settings. base = base salary on the contract (social insurance, OT and paid leave); gross = total monthly pay.
+  contract: {
+    probation: { from: '', to: '', base: 0, gross: 0 },
+    official: { from: '', to: '', base: 0, gross: 0 },   // `to` empty = open-ended
+    dependents: 0,             // dependants registered for the family deduction
+    probationTax: 'flat10',    // 'flat10' = separate probation contract < 3 months: 10% from the threshold per payment
+                               // 'progressive' = probation inside a contract of 3+ months; 'commit' = signed the no-withholding commitment
+    leaveDaysPerYear: 12,
+  },
+  salaries: [],              // legacy pay rates (before Settings held the contract): migrated by contractOf()
   holidays: DEFAULT_HOLIDAYS.map(h => ({ ...h })),
 });
 
@@ -99,8 +108,23 @@ function dayType(key, holidays) {
 
 const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
 
-/* Computes one day. opts.nowMin: for today without a check-out, count up to the current time. */
+/* Computes one day. opts.nowMin: for today without a check-out, count up to the current time.
+   rec.leave = {type:'paid'|'unpaid', part:'full'|'am'|'pm'} marks annual (paid) leave or unpaid leave. */
 function computeDay(key, rec, settings, opts) {
+  const r = computeWorkDay(key, rec, settings, opts);
+  r.leave = null; r.paidLeave = 0; r.unpaidLeave = 0;
+  const lv = rec && rec.leave;
+  if (!lv || (lv.type !== 'paid' && lv.type !== 'unpaid')) return r;
+  if (r.dt.type !== 'weekday' && r.dt.type !== 'saturday') return r; // Sundays and holidays are already days off
+  const part = r.dt.type === 'saturday' ? 'full' : (lv.part === 'am' || lv.part === 'pm' ? lv.part : 'full');
+  const amt = part === 'full' ? 1 : 0.5;
+  r.leave = { type: lv.type, part, days: amt };
+  r.cong = Math.max(0, Math.min(r.cong, 1 - amt));        // leave + work never exceed 1 workday
+  if (lv.type === 'paid') r.paidLeave = amt; else r.unpaidLeave = amt;
+  return r;
+}
+
+function computeWorkDay(key, rec, settings, opts) {
   const w = settings.work;
   const dt = dayType(key, settings.holidays);
   const g = (rec && rec.gps) || {};
@@ -157,13 +181,106 @@ function computeDay(key, rec, settings, opts) {
   return r;
 }
 
-/* Overtime is paid on the base salary in the contract, not on gross pay.
-   Rates saved before this field existed have no otBase: they fall back to gross pay. */
-const otBaseOf = sal => sal ? (sal.otBase > 0 ? sal.otBase : sal.amount) : 0;
+const addDays = (key, n) => { const d = parseKey(key); d.setDate(d.getDate() + n); return dateKey(d); };
 
-function salaryOn(key, salaries) {
-  const list = (salaries || []).filter(s => s.from && s.from <= key).sort((a, b) => a.from < b.from ? -1 : 1);
-  return list.length ? list[list.length - 1] : null;
+/* The contract from Settings; older data that only has dated pay rates is converted on the fly. */
+function contractOf(settings) {
+  const d = DEFAULT_SETTINGS().contract, c = settings.contract || {};
+  const out = { ...d, ...c, probation: { ...d.probation, ...(c.probation || {}) }, official: { ...d.official, ...(c.official || {}) } };
+  if (!out.probation.from && !out.official.from && (settings.salaries || []).length) {
+    const list = settings.salaries.slice().sort((a, b) => a.from < b.from ? -1 : 1);
+    const last = st => list.filter(x => (x.status || 'probation') === st).pop();
+    const p = last('probation'), o = last('official');
+    if (p) out.probation = { from: p.from, to: '', base: p.otBase || p.amount, gross: p.amount };
+    if (o) out.official = { from: o.from, to: '', base: o.otBase || o.amount, gross: o.amount };
+    if (p && o && o.from > p.from) out.probation.to = addDays(o.from, -1);
+  }
+  return out;
+}
+
+/* The contract period covering a day: {status, from, to, base, gross, amount, otBase} or null. */
+function salaryOn(key, contract) {
+  for (const status of ['official', 'probation']) {
+    const p = contract[status];
+    if (!p || !p.from || !(p.gross > 0) || key < p.from || (p.to && key > p.to)) continue;
+    const base = p.base > 0 ? p.base : p.gross;
+    return { id: status, status, from: p.from, to: p.to, gross: p.gross, base, amount: p.gross, otBase: base };
+  }
+  return null;
+}
+const otBaseOf = sal => sal ? sal.base : 0;
+
+/* ===== Insurance and personal income tax (Vietnam) =====
+   Employee insurance: social 8% + health 1.5% + unemployment 1% of the contract base salary (Social Insurance Law 2024,
+   Employment Law 2025). Social/health insurance capped at 20 × the statutory base pay (lương cơ sở: 2,340,000;
+   2,530,000 from 1 Jul 2026, Decree 161/2026); unemployment insurance capped at 20 × the region I minimum wage
+   (5,310,000 from 2026, Decree 293/2025). Not due in a month with 14+ working days not worked and unpaid
+   (including days outside the permanent contract).
+   PIT from tax year 2026 (Law 109/2025/QH15): 5 progressive brackets; deductions 15.5 M for the taxpayer and
+   6.2 M per dependant; all overtime pay is exempt (Decree 253/2026, Art. 26). Contracts under 3 months: 10% withheld
+   on payments from 5,000,000 VND (2,000,000 before 1 Jul 2026), settled in the annual tax return. */
+const TAX = {
+  baseSalary: [['2024-07-01', 2340000], ['2026-07-01', 2530000]],
+  regionMin: [['2025-01-01', 4960000], ['2026-01-01', 5310000]],
+  ins: { social: 0.08, health: 0.015, unemployment: 0.01 },
+  personal: 15500000, dependant: 6200000,
+  brackets: [[10e6, 0.05], [30e6, 0.10], [60e6, 0.20], [100e6, 0.30], [Infinity, 0.35]],
+  flatRate: 0.10, flatThreshold: [['2026-01-01', 2000000], ['2026-07-01', 5000000]],
+};
+const asOf = (table, key) => table.filter(([d]) => d <= key).reduce((v, [, x]) => x, table[0][1]);
+
+function progressiveTax(income) {
+  let tax = 0, lo = 0;
+  for (const [hi, rate] of TAX.brackets) {
+    if (income <= lo) break;
+    tax += (Math.min(income, hi) - lo) * rate; lo = hi;
+  }
+  return Math.round(tax);
+}
+
+/* Employee insurance for a month. rows: computeMonth rows (for unpaid leave). */
+function insuranceFor(y, m, rows, contract) {
+  const off = contract.official, first = y + '-' + pad(m) + '-01';
+  const none = reason => ({ due: false, reason, base: 0, social: 0, health: 0, unemployment: 0, total: 0 });
+  if (!off.from || !(off.gross > 0)) return none(rows.some(r => r.salary && r.salary.status === 'probation') ? 'probation' : 'noContract');
+  let covered = 0, notWorked = 0;
+  for (const r of rows) {
+    if (r.dt.dow === 0) continue;                       // Sunday
+    const inC = r.key >= off.from && (!off.to || r.key <= off.to);
+    if (inC) { covered++; notWorked += r.unpaidLeave; } else notWorked++;
+  }
+  if (!covered) return none('probation');
+  if (notWorked >= 14) return none('under14');
+  const base = off.base > 0 ? off.base : off.gross;
+  const capSH = 20 * asOf(TAX.baseSalary, first), capU = 20 * asOf(TAX.regionMin, first);
+  const social = Math.round(Math.min(base, capSH) * TAX.ins.social);
+  const health = Math.round(Math.min(base, capSH) * TAX.ins.health);
+  const unemployment = Math.round(Math.min(base, capU) * TAX.ins.unemployment);
+  return { due: true, reason: null, base, capped: base > capSH, social, health, unemployment, total: social + health + unemployment };
+}
+
+/* Pay, insurance, PIT and take-home pay of a computed month. */
+function deductionsFor(y, m, rows, totals, contract) {
+  const ins = insuranceFor(y, m, rows, contract);
+  const incomeOf = st => Math.round(rows.filter(r => r.salary && r.salary.status === st)
+    .reduce((a, r) => a + r.cong * r.daily + r.paidCong * r.daily + r.paidLeave * r.baseDaily, 0));
+  const probInc = incomeOf('probation'), offInc = incomeOf('official');
+  const deps = Math.max(0, Math.floor(+contract.dependents || 0));
+  const family = TAX.personal + deps * TAX.dependant;
+  const mode = contract.probationTax || 'flat10';
+  const progIncome = offInc + (mode === 'progressive' ? probInc : 0);
+  const taxable = Math.max(0, progIncome - ins.total - family);
+  const pitProgressive = progIncome > 0 ? progressiveTax(taxable) : 0;
+  const threshold = asOf(TAX.flatThreshold, y + '-' + pad(m) + '-01');
+  const flatDue = mode === 'flat10' && probInc >= threshold;
+  const pitFlat = flatDue ? Math.round(probInc * TAX.flatRate) : 0;
+  const pit = pitProgressive + pitFlat;
+  return {
+    insurance: ins, probationIncome: probInc, officialIncome: offInc, otExempt: totals.otPay,
+    mode, dependents: deps, family, progIncome, taxable, pitProgressive,
+    flatThreshold: threshold, flatDue, pitFlat, pit,
+    gross: totals.total, totalDeductions: ins.total + pit, net: totals.total - ins.total - pit,
+  };
 }
 
 function stdDays(y, m, settings) {
@@ -178,30 +295,62 @@ function stdDays(y, m, settings) {
 function computeMonth(y, m, days, settings, now) {
   const std = stdDays(y, m, settings);
   const rows = [];
-  const t = { workedMin: 0, cong: 0, paidCong: 0, ot150: 0, ot200: 0, ot300: 0, basePay: 0, otPay: 0, total: 0, tripDays: 0, missing: 0, noSalaryDays: 0, noOtBaseDays: 0 };
+  const C = contractOf(settings);
+  const t = { workedMin: 0, cong: 0, paidCong: 0, paidLeave: 0, unpaidLeave: 0, ot150: 0, ot200: 0, ot300: 0,
+    workPay: 0, holidayPay: 0, leavePay: 0, ot150Pay: 0, ot200Pay: 0, ot300Pay: 0,
+    basePay: 0, otPay: 0, total: 0, tripDays: 0, missing: 0, noSalaryDays: 0 };
+  const raw = { workPay: 0, holidayPay: 0, leavePay: 0, ot150Pay: 0, ot200Pay: 0, ot300Pay: 0 };
   for (let d = 1; d <= daysInMonth(y, m); d++) {
     const key = y + '-' + pad(m) + '-' + pad(d);
     const rec = days[key];
     const r = computeDay(key, rec, settings, now && now.key === key ? { nowMin: now.min } : null);
-    const sal = salaryOn(key, settings.salaries);
+    const sal = salaryOn(key, C);
     r.salary = sal;
-    r.daily = sal ? sal.amount / std : 0;
-    r.hourly = sal ? otBaseOf(sal) / std / 8 : 0;   // OT hourly rate, from the contract base salary
-    r.basePay = Math.round((r.cong + r.paidCong) * r.daily);
-    r.otPay = Math.round((r.ot150 / 60 * 1.5 + r.ot200 / 60 * 2 + r.ot300 / 60 * 3) * r.hourly);
+    r.daily = sal ? sal.gross / std : 0;             // day rate: gross pay
+    r.baseDaily = sal ? sal.base / std : 0;          // paid leave: contract base salary
+    r.hourly = sal ? sal.base / std / 8 : 0;         // OT hourly rate: contract base salary
+    r.workPay = Math.round(r.cong * r.daily);
+    r.holidayPay = Math.round(r.paidCong * r.daily);
+    r.leavePay = Math.round(r.paidLeave * r.baseDaily);
+    r.ot150Pay = Math.round(r.ot150 / 60 * 1.5 * r.hourly);
+    r.ot200Pay = Math.round(r.ot200 / 60 * 2 * r.hourly);
+    r.ot300Pay = Math.round(r.ot300 / 60 * 3 * r.hourly);
+    r.basePay = r.workPay + r.holidayPay + r.leavePay;
+    r.otPay = r.ot150Pay + r.ot200Pay + r.ot300Pay;
     r.total = r.basePay + r.otPay;
-    if (!sal && (r.cong || r.paidCong || r.ot150 || r.ot200 || r.ot300)) t.noSalaryDays++;
-    if (sal && !(sal.otBase > 0) && (r.ot150 || r.ot200 || r.ot300)) t.noOtBaseDays++;
+    if (!sal && (r.cong || r.paidCong || r.paidLeave || r.ot150 || r.ot200 || r.ot300)) t.noSalaryDays++;
     t.workedMin += r.workedMin; t.cong += r.cong; t.paidCong += r.paidCong;
+    t.paidLeave += r.paidLeave; t.unpaidLeave += r.unpaidLeave;
     t.ot150 += r.ot150; t.ot200 += r.ot200; t.ot300 += r.ot300;
-    t.basePay += r.basePay; t.otPay += r.otPay;
+    // Month totals add the unrounded day amounts, so a full month of work pays exactly the monthly gross
+    raw.workPay += r.cong * r.daily; raw.holidayPay += r.paidCong * r.daily; raw.leavePay += r.paidLeave * r.baseDaily;
+    raw.ot150Pay += r.ot150 / 60 * 1.5 * r.hourly; raw.ot200Pay += r.ot200 / 60 * 2 * r.hourly; raw.ot300Pay += r.ot300 / 60 * 3 * r.hourly;
     if (r.trip) t.tripDays++;
     if (r.missingOut || r.invalid) t.missing++;
     rows.push(r);
   }
   t.cong = Math.round(t.cong * 100) / 100;
+  for (const k in raw) t[k] = Math.round(raw[k]);
+  t.basePay = t.workPay + t.holidayPay + t.leavePay;
+  t.otPay = t.ot150Pay + t.ot200Pay + t.ot300Pay;
   t.total = t.basePay + t.otPay;
-  return { y, m, std, rows, totals: t };
+  return { y, m, std, rows, totals: t, contract: C, deductions: deductionsFor(y, m, rows, t, C) };
+}
+
+/* Annual leave used in a year. monthDays(m) returns that month's {key: rec}. */
+function leaveUsed(y, monthDays, settings) {
+  let used = 0;
+  for (let m = 1; m <= 12; m++) {
+    const days = monthDays(m) || {};
+    for (const [key, rec] of Object.entries(days)) {
+      if (!rec || !rec.leave || rec.leave.type !== 'paid') continue;
+      const dt = dayType(key, settings.holidays);
+      if (dt.type === 'weekday') used += rec.leave.part === 'am' || rec.leave.part === 'pm' ? 0.5 : 1;
+      else if (dt.type === 'saturday') used += 1;
+    }
+  }
+  const quota = Math.max(0, +contractOf(settings).leaveDaysPerYear || 0);
+  return { used, quota, left: quota - used };
 }
 
 /* ===== GPS state machine (office day / trip day) =====

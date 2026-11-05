@@ -25,7 +25,7 @@ Olive Timekeeper is an Android app that lets an employee record their own check-
 
 - Record check-in/out times automatically from location (GPS, office Wi-Fi), including days when the user stops at the office and then leaves on a business trip.
 - Allow check-in/out by tapping a button, the home-screen widget or a notification, and allow editing the times of any day.
-- Calculate workdays and overtime at 150% / 200% / 300%, estimate monthly pay, and export a detailed timesheet to Excel or PDF.
+- Calculate workdays, leave and overtime at 150% / 200% / 300%, estimate monthly pay, insurance, personal income tax and take-home pay, and export a detailed timesheet to Excel or PDF.
 
 **Scope**
 
@@ -33,7 +33,7 @@ Olive Timekeeper is an Android app that lets an employee record their own check-
 | --- | --- |
 | One user on one Android phone | Managing several employees, timesheet approval |
 | One workplace | Several offices or branches |
-| Pay estimate before tax and insurance | Personal income tax, social insurance, allowances, bonuses, deductions |
+| Pay estimate with employee insurance and personal income tax | Separate allowances, bonuses, union fees, other payroll deductions |
 | A web version for manual check-in (claude.ai, static hosting) | An iOS app |
 | Vietnamese public holidays for 2026–2027 preloaded | Automatic holiday updates for later years |
 | English and Vietnamese user interface | Other languages |
@@ -91,7 +91,8 @@ Automatic check-in only works when location access is set to "Allow all the time
 - A-01: There is one fixed workplace.
 - A-02: The schedule is Monday–Friday full days and Saturday half days (08:00–12:00), with Saturday still counting as 1 full workday; Sunday is a day off.
 - A-03: Public holidays follow the 2019 Labour Code plus Vietnam Culture Day (24 November); 2026–2027 are preloaded and the user adds later years.
-- A-04: Each pay rate has two amounts: the gross monthly salary (before allowances and deductions), which sets the day rate, and the base salary on the employment contract, which is the basis for overtime pay.
+- A-04: The contract is entered once in Settings: a probation period and a permanent period, each with dates, the base salary on the contract (basis for insurance, overtime and paid leave) and the gross monthly pay (total pay, basis for the day rate). All gross pay except overtime is taxable income.
+- A-06: Tax and insurance follow the rules in force from the 2026 tax year: Law 109/2025/QH15 on personal income tax, Decree 253/2026/NĐ-CP, the Social Insurance Law 2024, Decree 161/2026/NĐ-CP (statutory base pay) and Decree 293/2025/NĐ-CP (regional minimum wage).
 - A-05: Lunch is fixed at 12:00–13:00 for every day type, including Sundays and public holidays.
 
 ## 3. Business rules
@@ -110,15 +111,22 @@ All calculations use check-in/out times rounded down to 15-minute blocks. Workda
 | BR-08 | 300% overtime: public holidays. All hours worked (lunch excluded), in 30-minute steps | 24 Nov 08:00–17:00 → 8 h × 300% |
 | BR-09 | A public holiday or compensatory day falling on Monday–Saturday earns 1 paid workday whether or not the user works | 24 Nov 2026 (Tuesday) → 1 holiday workday |
 | BR-10 | Monthly standard workdays = the number of Monday–Saturday days in the month; can be fixed at 24 or 26 instead | October 2026 → 27 |
-| BR-11 | Daily rate = gross monthly pay ÷ standard workdays. OT hourly rate = contract base salary ÷ standard workdays ÷ 8 (Saturdays included). A rate saved before the base-salary field existed uses gross pay for OT and is flagged | Gross 10,800,000, base 5,400,000, 27 days → 400,000/day; OT 25,000/hour |
-| BR-12 | A pay rate applies from its start date; each day uses the rate with the latest start date on or before it | Probation from 1 Oct, permanent from 15 Oct → the two periods are calculated separately |
-| BR-13 | Estimated pay = (workdays + holiday workdays) × daily rate + OT hours × OT hourly rate × multiplier, summed day by day; before tax and insurance | See the example below the table |
+| BR-11 | Daily rate = gross monthly pay ÷ standard workdays. Base daily rate = base salary ÷ standard workdays. OT hourly rate = base salary ÷ standard workdays ÷ 8 (Saturdays included) | Gross 10,800,000, base 5,400,000, 27 days → 400,000/day; base 200,000/day; OT 25,000/hour |
+| BR-12 | Each day uses the period that covers it: permanent first, then probation. A day outside both is not paid and is counted in a warning | Probation 1–14 Oct, permanent from 15 Oct → the two parts of the month are calculated separately |
+| BR-13 | Gross income = (workdays + holiday workdays) × daily rate + paid leave days × base daily rate + OT hours × OT hourly rate × multiplier. Day amounts are summed unrounded and the month is rounded once, so a full month pays exactly the gross pay | See the example below the table |
+| BR-18 | Paid leave and unpaid leave can be marked on a weekday for the whole day, the morning or the afternoon (½); on Saturday leave is always 1 day. Leave on Sundays and holidays is ignored. Work and leave together never exceed 1 workday | Morning leave + afternoon 13:00–17:00 → 0.5 workday + 0.5 paid leave |
+| BR-19 | Employee insurance applies only to the permanent period: 8% social + 1.5% health + 1% unemployment insurance on the base salary. Social and health insurance are capped at 20 × the statutory base pay (2,340,000; 2,530,000 from 1 July 2026); unemployment insurance at 20 × the region I minimum wage (5,310,000 in 2026) | Base 10,000,000 → 800,000 + 150,000 + 100,000 |
+| BR-20 | No insurance in a month with 14 or more Monday–Saturday days outside the permanent contract or on unpaid leave | Permanent from 19 Oct 2026 (16 days before) → no insurance in October |
+| BR-21 | Personal income tax (progressive): taxable income = gross income − overtime pay (exempt) − insurance − family deduction (15,500,000 + 6,200,000 per dependant); brackets up to 10 M 5%, 10–30 M 10%, 30–60 M 20%, 60–100 M 30%, over 100 M 35% | Taxable 16,200,000 → 500,000 + 620,000 = 1,120,000 |
+| BR-22 | Probation tax, chosen in Settings: (a) contract under 3 months: 10% of the probation income (overtime excluded) when it reaches 5,000,000 per payment (2,000,000 before July 2026); (b) probation inside a contract of 3+ months: progressive with the permanent income; (c) no-withholding commitment signed: none | 11,777,778 → 1,177,778 withheld |
+| BR-23 | Take-home pay = gross income − insurance − personal income tax; an estimate, settled in the annual tax return | — |
+| BR-24 | Annual leave used = paid leave days marked in the calendar year (½ for half days); left = annual leave days per year (default 12) − used | 2.5 used of 12 → 9.5 left |
 | BR-14 | A past day without a check-out, or with a check-out not after the check-in, earns no workday and is flagged ⚠ | In 08:10, no out → 0 workdays |
 | BR-15 | Today without a check-out is counted up to the current time | — |
 | BR-16 | Leaving the office before the cutoff, not on a business trip, and not returning: the departure time becomes a provisional check-out | Morning shift 07:58–12:02 → 0.5 workday |
 | BR-17 | A provisional check-out becomes the check-out after 60 minutes away (configurable). Leaving from 30 minutes before lunch until lunch ends waits until 30 minutes after lunch instead. A day that ended with a provisional check-out is settled the next time the app opens | Left 10:00 → final at 11:00 · left 12:08 → final at 13:30 |
 
-Example for BR-13: gross pay of 10,800,000 VND and a contract base salary of 5,400,000 VND, October 2026, 6 October in at 08:00 and out at 17:43 → 1 workday (400,000 VND) + 0.5 h OT × 25,000 × 1.5 (18,750 VND) = 418,750 VND.
+Example for BR-13: gross pay of 10,800,000 VND and a base salary of 5,400,000 VND, October 2026: 6 October in at 08:00 and out at 17:43 → 1 workday (400,000 VND) + 0.5 h OT × 25,000 × 1.5 (18,750 VND); 7 October paid leave → 200,000 VND. Gross income = 618,750 VND.
 
 ## 4. Epic 1 – Manual check-in and editing
 
@@ -148,7 +156,7 @@ As an employee, I want to tap Check out when I leave so that my real check-out t
 As an employee, I want to correct my own check-in/out times when GPS is wrong or I forgot to tap.
 
 - AC-03.1: The edit sheet opens from "Edit times" (today), from a row in the Timesheet, or from "+ Add / edit day" (today if the current month is shown, otherwise the 1st).
-- AC-03.2: The sheet has Date, Check-in, Check-out, "I went on a business trip this day" and Note; it shows the weekday, the day type (weekday, Saturday, Sunday, public holiday, compensatory day) and any GPS times recorded.
+- AC-03.2: The sheet has Date, Check-in, Check-out, "I went on a business trip this day", leave ("Paid annual leave" and "Unpaid leave" checkboxes, only one at a time, with Whole day / Morning / Afternoon; hidden on Sundays and holidays, no half day on Saturdays) and Note; it shows the weekday, the day type (weekday, Saturday, Sunday, public holiday, compensatory day) and any GPS times recorded.
 - AC-03.3: Check-out not after check-in → not saved, "Check-out must be after check-in". A check-out without a check-in → "Enter the check-in time first".
 - AC-03.4: An entered time equal to the GPS time → stays a GPS time. A different time → stored as a manual time. An empty field → clears that time, including the GPS time.
 - AC-03.5: "Use GPS times" appears only when the day has GPS times; tapping it removes the manual times.
@@ -332,41 +340,43 @@ As an employee, I want to be told once when the app records a time automatically
 
 ## 7. Epic 4 – Monthly timesheet and pay estimate
 
-The Timesheet tab shows every day of the month with totals. The Pay tab estimates pay according to BR-01 to BR-17 and manages pay rates.
+The Timesheet tab shows every day of the month with totals. The Pay tab estimates pay, insurance, tax and take-home pay according to BR-01 to BR-24, from the contract set once in Settings.
 
 ### US-15 – View the monthly timesheet
 
 As an employee, I want to see each working day of the month in detail so that I can compare it with my company's timesheet.
 
 - AC-15.1: Months are switched with ‹ ›; the title is "October 2026" (English) or "Tháng 10 / 2026" (Vietnamese); the app opens on the current month.
-- AC-15.2: Six summary tiles: Hours worked, Workdays / standard (including holiday workdays), OT 150%, OT 200%, OT 300%, Trip days.
-- AC-15.3: One row per day for every day of the month, with columns: Date + weekday · Type (Sat, Sun, Holiday, Comp. day) · In · Out · Lunch (minutes) · Worked · Workday · OT 150% · OT 200% · OT 300% · Business trip · Note.
+- AC-15.2: Seven summary tiles: Hours worked, Workdays / standard (including holiday workdays and paid leave), OT 150%, OT 200%, OT 300%, Trip days, Leave (paid · unpaid).
+- AC-15.3: One row per day for every day of the month, with columns: Date + weekday · Type (Sat, Sun, Holiday, Comp. day, plus a Leave / Unpaid pill, "½" for half days) · In · Out · Lunch (minutes) · Worked · Workday · OT 150% · OT 200% · OT 300% · Business trip · Note.
 - AC-15.4: In/Out show the actual time, a dot for the source (olive = manual, purple = GPS) and, if different, the rounded time ("06:55 → 06:45"). A provisional check-out shows "(provisional)"; today while working shows "working".
 - AC-15.5: The Business trip column shows the trip's time range ("07:03–16:50", or "07:03–…" if not back) or "Yes" when marked by hand. The Note column shows the user's note, or the holiday name.
 - AC-15.6: Today's row is highlighted; Sundays and compensatory days have a blue bar, public holidays a red bar; days not worked are dimmed; days missing a check-out or with an invalid one show ⚠.
 - AC-15.7: A Total row ends the table; if there are ⚠ days, a warning with their number appears above the table.
 - AC-15.8: The table scrolls horizontally on phones with the Date column pinned; tapping a row opens the edit sheet for that day (US-03).
 
-### US-16 – Enter and update pay rates
+### US-16 – Set up the contract and salary once
 
-As an employee, I want to enter my probation and permanent pay with their start dates so that the month I become permanent is calculated correctly.
+As an employee, I want to enter my probation and permanent periods and salaries once so that every month is calculated without re-entering anything.
 
-- AC-16.1: The form has Applies from, Gross monthly pay (VND), Contract base salary for OT (VND) and Status (Probation / Permanent). Missing date or either amount → not saved, "Enter the start date, gross pay and contract base salary".
-- AC-16.2: Both amount fields accept digits only and adds thousands separators while typing (10,000,000 in English, 10.000.000 in Vietnamese).
-- AC-16.3: Saving a rate with the same start date as an existing one → replaces it.
-- AC-16.4: Rates are listed newest first, each with gross amount, status label, the contract base salary used for OT (or "No contract base salary yet; OT uses gross pay"), start date and a delete button. Tapping a rate loads it into the form to edit; saving with the same start date replaces it.
-- AC-16.5: Adding, changing or deleting a rate → the timesheet and Pay tab recalculate immediately, including past months.
+- AC-16.1: Settings → Contract & salary has two sections, Probation and Permanent, each with Start date, End date (calendar pickers; Permanent end may stay empty = open-ended), Base salary on the contract (social insurance) and Gross monthly pay (total pay).
+- AC-16.2: Below: Registered dependants (≥ 0), Tax during probation (10% withheld · Progressive · None, commitment signed) and Annual leave days per year (default 12).
+- AC-16.3: Amount fields accept digits only and add thousands separators while typing. Every change saves immediately and recalculates every month ("Contract saved; pay recalculated").
+- AC-16.4: Entering the permanent start while probation has no end → probation ends the day before. Entering the probation end while permanent has no start → permanent starts the next day.
+- AC-16.5: An end date before its start date → not saved, "The end date is before the start date". Base salary above gross pay, or overlapping periods → a warning (overlapping days use the permanent salary).
+- AC-16.6: Pay rates saved by earlier versions are converted into the two periods the first time the app opens (the earlier rate's probation ends the day before permanent starts).
 
 ### US-17 – View the monthly pay estimate
 
-As an employee, I want to know roughly what this month's pay will be, broken down by component.
+As an employee, I want to know roughly what I will take home this month, with every component visible.
 
-- AC-17.1: The estimated total is shown large, marked "before tax and insurance".
-- AC-17.2: Below the total: the status and pay rate applied (or "Pay rate changed this month (calculated per day)"), the standard workdays and the formulas (day rate from gross pay, OT hourly rate from the contract base salary).
-- AC-17.3: A five-line breakdown plus total: Pay for days worked (workdays × daily rate) · Paid holidays / compensatory days (days) · OT 150% · Sunday / comp. day 200% · Public holiday 300% (each OT line shows the hours and "OT hourly rate × multiplier / hour").
-- AC-17.4: Workdays without an applicable pay rate → a warning with their number, suggesting a rate with an earlier start date; those days count as 0.
-- AC-17.5: Amounts are rounded to the dong and formatted for the chosen language (1,219,906 ₫ / 1.219.906 ₫).
-- AC-17.6: Days with overtime whose pay rate has no contract base salary → a warning with their number, asking the user to tap the rate and add the base salary.
+- AC-17.1: The estimated take-home pay is shown large, with "Gross income … · deductions …" below, the status and gross pay applied (or "Pay rate changed this month (calculated per day)"), the standard workdays and the formula.
+- AC-17.2: Income: Pay for days worked (workdays × daily rate) · Paid holidays / compensatory days · Paid annual leave (days × base daily rate) · OT 150% · OT 200% · OT 300% (hours and "OT hourly rate × multiplier / hour") · Gross income (noting the tax-free overtime).
+- AC-17.3: Deductions: Social insurance 8%, Health insurance 1.5%, Unemployment insurance 1% "on a base salary of …" (or one Insurance line with the reason: probation, no permanent contract, 14+ days not covered) · Personal income tax (progressive) with "taxable income − insurance − family deduction (n dependants) = assessable" · Personal income tax (probation) with "10% × …", "below 5,000,000 per payment" or "commitment signed" · Total deductions · Estimated take-home pay.
+- AC-17.4: Days outside both periods → a warning with their number pointing to Settings → Contract & salary; those days count as 0.
+- AC-17.5: Amounts are rounded to the dong and formatted for the chosen language (1,219,906 ₫ / 1.219.906 ₫); deductions are shown in red with a minus sign.
+- AC-17.6: A Leave card shows annual leave used in the year / quota, leave left (red with a warning when negative) and this month's paid · unpaid leave days.
+- AC-17.7: A Contract & salary card lists both periods (dates, gross, base) with "Edit in Settings", which opens the Settings section.
 
 ## 8. Epic 5 – Excel and PDF export
 
@@ -377,10 +387,10 @@ From the Pay tab, the user can export the timesheet and pay estimate of the mont
 As an employee, I want to export my timesheet to Excel to filter it, compare it and send it to HR.
 
 - AC-18.1: File name `timesheet-YYYY-MM[-full-name-without-accents].xlsx` in English or `bang-luong-YYYY-MM[…].xlsx` in Vietnamese, e.g. `timesheet-2026-10-Nguyen-Van-A.xlsx`; one sheet named "Timesheet MM-YYYY" / "Bang cong MM-YYYY".
-- AC-18.2: Header: the title "TIMESHEET & PAY ESTIMATE · OCTOBER 2026"; Employee, Status, Gross monthly pay, Contract base salary (OT), Standard workdays, OT hourly rate, Exported at.
-- AC-18.3: One row per day with 21 columns: Date · Day · Day type · Check-in · In (rounded) · In source · Check-out · Out (rounded) · Out source · Lunch (min) · Worked (h) · Workdays · Holiday / comp. workdays · OT 150% · OT 200% · OT 300% (h) · Business trip · Day pay · OT pay · Day total · Note.
+- AC-18.2: Header: the title "TIMESHEET & PAY ESTIMATE · OCTOBER 2026"; Employee, Status, Gross monthly pay, Base salary on the contract, Standard workdays, OT hourly rate, Exported at.
+- AC-18.3: One row per day with 22 columns: Date · Day · Day type · Check-in · In (rounded) · In source · Check-out · Out (rounded) · Out source · Lunch (min) · Worked (h) · Workdays · Holiday / comp. workdays · Leave · OT 150% · OT 200% · OT 300% (h) · Business trip · Day pay · OT pay · Day total · Note.
 - AC-18.4: The time source reads "Manual" or "GPS"; a missing check-out reads "MISSING"; today without a check-out reads "working".
-- AC-18.5: A TOTAL row follows the days, then a PAY SUMMARY with the five components and the ESTIMATED TOTAL, matching the Pay tab.
+- AC-18.5: A TOTAL row follows the days, then a PAY SUMMARY with the income lines, GROSS INCOME, the insurance and tax lines, TOTAL DEDUCTIONS and ESTIMATED TAKE-HOME PAY, matching the Pay tab.
 - AC-18.6: Money columns use `#,##0`; hours are decimals with 2 places; the day table has an auto-filter; column widths are preset.
 
 ### US-19 – Export to PDF
@@ -388,7 +398,7 @@ As an employee, I want to export my timesheet to Excel to filter it, compare it 
 As an employee, I want a compact PDF to send or keep.
 
 - AC-19.1: File name as in AC-18.1 with `.pdf`; A4 landscape, 3 pages, always on a white background even in dark mode.
-- AC-19.2: Page 1: the title "Timesheet · October 2026", employee details and days 1–16. Page 2: the remaining days and the Total row. Page 3: the pay estimate (five components + total) with a paragraph explaining the method (standard workdays, Saturday standard hours, rounding block, OT step).
+- AC-19.2: Page 1: the title "Timesheet · October 2026", employee details and days 1–16. Page 2: the remaining days and the Total row. Page 3: the pay estimate (income lines, gross income, insurance, tax, take-home pay) with a paragraph explaining the method (standard workdays, Saturday standard hours, rounding block, OT step).
 - AC-19.3: The PDF day table has 14 columns: Date, Day, Type, In, Out, Lunch, Worked, Workday, OT 150%, OT 200%, OT 300%, Business trip, Amount, Note; rounded times appear as "06:55 → 06:45" and GPS times carry "(GPS)".
 - AC-19.4: Every page footer reads "Olive Timekeeper · An estimate; it does not replace your company's official payslip" and "Page n/3".
 
@@ -554,3 +564,6 @@ Automatic check-in has not yet been tested on a real phone, and some business ru
 | Q-08 | Should event notifications (check-in, check-out) be silent by default? | One sound or vibration |
 | Q-09 | Public holidays from 2028 on | Entered by the user when announced |
 | Q-10 | Should the web and Android versions share data? | No; use a backup file |
+| Q-11 | Should the probation 10% include overtime pay? | No; overtime is tax-exempt income |
+| Q-12 | Are allowances (e.g. meals, up to 1,200,000/month tax-free) part of the gross pay? | Not modelled; all gross pay except overtime is taxable |
+| Q-13 | Union fee (1% of the insurance salary) | Not deducted |

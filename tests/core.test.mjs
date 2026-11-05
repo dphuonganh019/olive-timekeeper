@@ -8,8 +8,8 @@ const ctx = {};
 vm.createContext(ctx);
 const src = f => readFileSync(new URL('../src/' + f, import.meta.url), 'utf8');
 vm.runInContext(src('core.js') + '\n' + src('i18n.js') +
-  ';this.X={computeDay,computeMonth,gpsStep,geofenceReplay,DEFAULT_SETTINGS,settleLeave,leaveFinalMin,migrateHolidays,dayType,I18N,T,setLang,eventText,signalText,holidayName,dayLabel};', ctx);
-const { computeDay, computeMonth, geofenceReplay, DEFAULT_SETTINGS, settleLeave, leaveFinalMin } = ctx.X;
+  ';this.X={computeDay,computeMonth,contractOf,progressiveTax,leaveUsed,gpsStep,geofenceReplay,DEFAULT_SETTINGS,settleLeave,leaveFinalMin,migrateHolidays,dayType,I18N,T,setLang,eventText,signalText,holidayName,dayLabel};', ctx);
+const { computeDay, computeMonth, contractOf, progressiveTax, leaveUsed, geofenceReplay, DEFAULT_SETTINGS, settleLeave, leaveFinalMin } = ctx.X;
 const S = DEFAULT_SETTINGS();
 const day = (i, o, key = '2026-10-06') => computeDay(key, { manualIn: i, manualOut: o }, S);
 const at = (d, h, m) => new Date(2026, 9, d, h, m).getTime();
@@ -42,44 +42,147 @@ test('Sunday pays 200%, a public holiday 300% plus the paid holiday workday', ()
   assert.equal(h.paidCong, 1);
 });
 
-test('monthly pay is divided by the number of Mon–Sat standard workdays', () => {
-  const s = { ...DEFAULT_SETTINGS(), salaries: [{ id: 'a', from: '2026-10-01', amount: 10800000, status: 'probation' }] };
-  const M = computeMonth(2026, 10, { '2026-10-06': { manualIn: '08:00', manualOut: '17:43' } }, s);
-  assert.equal(M.std, 27);
-  assert.equal(M.totals.basePay, 400000);           // 10.800.000 / 27
-  assert.equal(M.totals.otPay, Math.round(0.5 * 1.5 * 50000)); // hourly rate 50,000
-});
+/* Contract set once in Settings */
+const withContract = (c) => {
+  const d = DEFAULT_SETTINGS();
+  return { ...d, contract: { ...d.contract, ...c, probation: { ...d.contract.probation, ...(c.probation || {}) }, official: { ...d.contract.official, ...(c.official || {}) } } };
+};
+const PROB = { probation: { from: '2026-10-01', to: '2026-12-31', base: 5400000, gross: 10800000 } };
 
-test('overtime is paid on the contract base salary, day pay on gross pay', () => {
-  const s = { ...DEFAULT_SETTINGS(), salaries: [{ id: 'a', from: '2026-10-01', amount: 10800000, otBase: 5400000, status: 'official' }] };
+test('day pay uses gross ÷ standard workdays, OT the contract base salary', () => {
+  const s = withContract(PROB);
   const M = computeMonth(2026, 10, {
     '2026-10-06': { manualIn: '08:00', manualOut: '17:43' },  // 1 workday + 0.5 h OT 150%
     '2026-10-11': { manualIn: '08:00', manualOut: '17:00' },  // Sunday: 8 h OT 200%
   }, s);
-  assert.equal(M.totals.basePay, 400000);                     // 10,800,000 / 27 (gross)
-  // OT hourly rate = 5,400,000 / 27 / 8 = 25,000
-  assert.equal(M.totals.otPay, Math.round(0.5 * 1.5 * 25000) + 8 * 2 * 25000);
-  assert.equal(M.totals.noOtBaseDays, 0);
+  assert.equal(M.std, 27);
+  assert.equal(M.totals.basePay, 400000);                     // 10,800,000 / 27
+  assert.equal(M.totals.otPay, Math.round(0.5 * 1.5 * 25000) + 8 * 2 * 25000); // 5,400,000 / 27 / 8 = 25,000
 });
 
-test('a pay rate saved without a contract base salary keeps OT on gross pay and is flagged', () => {
-  const s = { ...DEFAULT_SETTINGS(), salaries: [{ id: 'a', from: '2026-10-01', amount: 10800000, status: 'probation' }] };
-  const M = computeMonth(2026, 10, { '2026-10-06': { manualIn: '08:00', manualOut: '17:43' }, '2026-10-07': { manualIn: '08:00', manualOut: '17:00' } }, s);
-  assert.equal(M.totals.otPay, Math.round(0.5 * 1.5 * 50000));
-  assert.equal(M.totals.noOtBaseDays, 1);                     // only the day with OT counts
-});
-
-test('contract base salary changes with the pay rate mid-month', () => {
-  const s = { ...DEFAULT_SETTINGS(), salaries: [
-    { id: 'a', from: '2026-10-01', amount: 10800000, otBase: 5400000, status: 'probation' },
-    { id: 'b', from: '2026-10-15', amount: 13500000, otBase: 10800000, status: 'official' },
-  ] };
+test('probation and permanent periods split the month by date', () => {
+  const s = withContract({
+    probation: { from: '2026-10-01', to: '2026-10-14', base: 5400000, gross: 10800000 },
+    official: { from: '2026-10-15', base: 10800000, gross: 13500000 },
+  });
   const M = computeMonth(2026, 10, {
     '2026-10-06': { manualIn: '08:00', manualOut: '18:00' },  // 1 h OT at 25,000
     '2026-10-20': { manualIn: '08:00', manualOut: '18:00' },  // 1 h OT at 50,000
   }, s);
   assert.equal(M.totals.otPay, 1.5 * 25000 + 1.5 * 50000);
   assert.equal(M.totals.basePay, 400000 + 500000);
+  assert.equal(M.rows[5].salary.status, 'probation');
+  assert.equal(M.rows[19].salary.status, 'official');
+});
+
+test('days outside both periods have no pay and are counted', () => {
+  const s = withContract({ official: { from: '2026-10-15', base: 10000000, gross: 13500000 } });
+  const M = computeMonth(2026, 10, { '2026-10-06': { manualIn: '08:00', manualOut: '17:00' } }, s);
+  assert.equal(M.totals.basePay, 0);
+  assert.equal(M.totals.noSalaryDays, 1);
+});
+
+test('old dated pay rates are converted into probation and permanent periods', () => {
+  const c = contractOf({ ...DEFAULT_SETTINGS(), salaries: [
+    { id: 'a', from: '2026-10-01', amount: 10800000, otBase: 5400000, status: 'probation' },
+    { id: 'b', from: '2026-12-01', amount: 15000000, status: 'official' },
+  ] });
+  assert.equal(c.probation.from, '2026-10-01'); assert.equal(c.probation.to, '2026-11-30');
+  assert.equal(c.probation.base, 5400000); assert.equal(c.probation.gross, 10800000);
+  assert.equal(c.official.from, '2026-12-01'); assert.equal(c.official.base, 15000000); // no base saved: gross
+});
+
+test('paid leave pays the contract base salary, unpaid leave pays nothing', () => {
+  const s = withContract(PROB);
+  const M = computeMonth(2026, 10, {
+    '2026-10-06': { leave: { type: 'paid', part: 'full' } },
+    '2026-10-07': { leave: { type: 'unpaid', part: 'full' } },
+    '2026-10-08': { manualIn: '13:00', manualOut: '17:00', leave: { type: 'paid', part: 'am' } },
+  }, s);
+  assert.equal(M.totals.paidLeave, 1.5);
+  assert.equal(M.totals.unpaidLeave, 1);
+  assert.equal(M.totals.leavePay, 200000 + 100000);           // 5,400,000 / 27 = 200,000 per day
+  assert.equal(M.totals.workPay, 200000);                     // afternoon worked: 0.5 × 400,000
+});
+
+test('leave on top of a full day of work never exceeds one workday; Sundays ignore leave', () => {
+  const s = withContract(PROB);
+  const r = computeDay('2026-10-06', { manualIn: '08:00', manualOut: '17:00', leave: { type: 'paid', part: 'pm' } }, s);
+  assert.equal(r.cong + r.paidLeave, 1);
+  assert.equal(computeDay('2026-10-11', { leave: { type: 'paid' } }, s).paidLeave, 0);
+  assert.equal(computeDay('2026-10-10', { leave: { type: 'paid', part: 'am' } }, s).paidLeave, 1); // Saturday = 1 day
+});
+
+test('PIT 2026: 5 progressive brackets', () => {
+  assert.equal(progressiveTax(0), 0);
+  assert.equal(progressiveTax(10e6), 500000);
+  assert.equal(progressiveTax(30e6), 500000 + 2000000);
+  assert.equal(progressiveTax(45e6), 2500000 + 3000000);
+  assert.equal(progressiveTax(120e6), 2500000 + 6000000 + 12000000 + 7000000);
+});
+
+const fullMonth = (y, m, from = '08:00', to = '17:00') => {
+  const days = {};
+  for (let d = 1; d <= new Date(y, m, 0).getDate(); d++) {
+    const dt = new Date(y, m - 1, d), key = y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    if (dt.getDay() === 0) continue;
+    days[key] = dt.getDay() === 6 ? { manualIn: '08:00', manualOut: '12:00' } : { manualIn: from, manualOut: to };
+  }
+  return days;
+};
+
+test('permanent month: 10.5% insurance on the base salary, PIT after deductions, OT tax-free', () => {
+  const s = withContract({ official: { from: '2026-01-01', base: 20000000, gross: 40000000 }, dependents: 1 });
+  const days = fullMonth(2026, 10); days['2026-10-11'] = { manualIn: '08:00', manualOut: '17:00' }; // Sunday OT
+  const D = computeMonth(2026, 10, days, s).deductions;
+  assert.equal(D.insurance.due, true);
+  assert.equal(D.insurance.social, 1600000); assert.equal(D.insurance.health, 300000); assert.equal(D.insurance.unemployment, 200000);
+  assert.equal(D.officialIncome, 40000000);                   // OT not taxable
+  assert.ok(D.otExempt > 0);
+  // 40,000,000 − 2,100,000 − 15,500,000 − 6,200,000 = 16,200,000 → 500,000 + 620,000
+  assert.equal(D.taxable, 16200000);
+  assert.equal(D.pit, 1120000);
+  assert.equal(D.net, D.gross - 2100000 - 1120000);
+});
+
+test('insurance is capped at 20 × the statutory base pay (2,530,000 from July 2026)', () => {
+  const s = withContract({ official: { from: '2026-01-01', base: 80000000, gross: 80000000 } });
+  assert.equal(computeMonth(2026, 10, fullMonth(2026, 10), s).deductions.insurance.social, Math.round(50600000 * 0.08));
+  assert.equal(computeMonth(2026, 6, fullMonth(2026, 6), s).deductions.insurance.social, Math.round(46800000 * 0.08));
+  assert.equal(computeMonth(2026, 10, fullMonth(2026, 10), s).deductions.insurance.unemployment, 800000); // cap 106.2 M
+});
+
+test('no insurance in a month with 14+ working days outside the contract or on unpaid leave', () => {
+  const late = withContract({ official: { from: '2026-10-19', base: 10000000, gross: 15000000 } });   // 16 Mon–Sat days before
+  assert.equal(computeMonth(2026, 10, {}, late).deductions.insurance.reason, 'under14');
+  const early = withContract({ official: { from: '2026-10-12', base: 10000000, gross: 15000000 } });  // 10 days before
+  assert.equal(computeMonth(2026, 10, {}, early).deductions.insurance.due, true);
+  const s = withContract({ official: { from: '2026-01-01', base: 10000000, gross: 15000000 } });
+  const days = {};
+  for (let d = 1; d <= 16; d++) { const k = '2026-10-' + String(d).padStart(2, '0'); if (new Date(2026, 9, d).getDay()) days[k] = { leave: { type: 'unpaid' } }; }
+  assert.equal(computeMonth(2026, 10, days, s).deductions.insurance.due, false);
+  assert.equal(computeMonth(2026, 10, {}, withContract(PROB)).deductions.insurance.reason, 'probation');
+});
+
+test('probation PIT: 10% from 5,000,000 per payment (2,000,000 before July 2026), or progressive, or none', () => {
+  const p = { probation: { from: '2026-01-01', to: '2026-12-31', base: 8000000, gross: 13500000 } };
+  const M = computeMonth(2026, 10, fullMonth(2026, 10), withContract(p));
+  assert.equal(M.deductions.insurance.due, false);
+  assert.equal(M.deductions.pitFlat, Math.round(M.totals.basePay * 0.1));
+  const small = computeMonth(2026, 10, { '2026-10-06': { manualIn: '08:00', manualOut: '17:00' } }, withContract(p));
+  assert.equal(small.deductions.pit, 0);                       // 500,000 < 5,000,000
+  const june = computeMonth(2026, 6, { '2026-06-01': { manualIn: '08:00', manualOut: '17:00' }, '2026-06-02': { manualIn: '08:00', manualOut: '17:00' }, '2026-06-03': { manualIn: '08:00', manualOut: '17:00' }, '2026-06-04': { manualIn: '08:00', manualOut: '17:00' } }, withContract(p));
+  assert.equal(june.deductions.flatDue, true);                 // 2,000,000 ≥ 2,000,000
+  assert.equal(computeMonth(2026, 10, fullMonth(2026, 10), withContract({ ...p, probationTax: 'progressive' })).deductions.pit, 0); // 13.5 M < 15.5 M
+  assert.equal(computeMonth(2026, 10, fullMonth(2026, 10), withContract({ ...p, probationTax: 'commit' })).deductions.pit, 0);
+});
+
+test('annual leave used in a year counts half days and Saturdays', () => {
+  const s = withContract({});
+  const days = { 1: { '2026-01-05': { leave: { type: 'paid' } }, '2026-01-06': { leave: { type: 'paid', part: 'am' } } },
+    10: { '2026-10-10': { leave: { type: 'paid', part: 'am' } }, '2026-10-07': { leave: { type: 'unpaid' } } } };
+  const u = leaveUsed(2026, m => days[m], s);
+  assert.equal(u.used, 2.5); assert.equal(u.quota, 12); assert.equal(u.left, 9.5);
 });
 
 function replay(events, manualIn) {

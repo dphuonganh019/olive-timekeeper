@@ -439,15 +439,18 @@ function typePill(r) {
 const rnote = (raw, rd) => rd && rd !== raw ? `<span class="muted small"> → ${rd}</span>` : '';
 const dash = v => v ? v : '<span class="muted">—</span>';
 const tripText = r => r.trips.length ? r.trips.map(x => x.start + '–' + (x.end || '…')).join(', ') : T('month.yes');
+const leaveText = lv => T(lv.type === 'paid' ? 'leave.paid' : 'leave.unpaid') + (lv.part === 'am' ? ' · ' + T('edit.part.am') : lv.part === 'pm' ? ' · ' + T('edit.part.pm') : '');
+const leavePill = r => r.leave ? `<span class="pill ${r.leave.type === 'paid' ? 'leave' : 'unpaid'}">${esc(T(r.leave.type === 'paid' ? 'pill.leave' : 'pill.unpaid'))}${r.leave.days < 1 ? ' ½' : ''}</span>` : '';
 function renderMonth(M) {
   const t = M.totals;
   $('#monthStats').innerHTML = [
     [T('stat.worked'), fmtH(t.workedMin), ''],
-    [T('stat.cong'), fmtNum(round2(t.cong + t.paidCong)) + ' / ' + M.std, ''],
+    [T('stat.cong'), fmtNum(round2(t.cong + t.paidCong + t.paidLeave)) + ' / ' + M.std, ''],
     ['OT 150%', fmtH(t.ot150), 'r150'],
     ['OT 200%', fmtH(t.ot200), 'r200'],
     ['OT 300%', fmtH(t.ot300), 'r300'],
     [T('stat.trip'), t.tripDays, 'trip'],
+    [T('stat.leave'), fmtNum(t.paidLeave) + ' · ' + fmtNum(t.unpaidLeave), ''],
   ].map(([k, v, c]) => `<div class="stat ${c}"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`).join('');
   $('#monthWarn').innerHTML = t.missing ? `<div class="notice">${esc(T('month.warn', { n: t.missing }))}</div>` : '';
   const tk = todayKey();
@@ -456,10 +459,10 @@ function renderMonth(M) {
   const body = M.rows.map(r => {
     const cls = [r.dt.type === 'sunday' || r.dt.type === 'comp' ? 'sun' : '', r.dt.type === 'holiday' ? 'hol' : '', !r.inHM ? 'off' : '', r.key === tk ? 'today' : ''].join(' ');
     const warn = r.missingOut || r.invalid ? ' ⚠' : '';
-    const cong = r.cong + r.paidCong;
+    const cong = r.cong + r.paidCong + r.paidLeave;
     return `<tr class="${cls}" data-key="${r.key}">
       <td class="sticky"><b>${esc(fmtDM(r.key))}</b> <span class="muted">${esc(dowShort(r.dt.dow))}</span>${warn}</td>
-      <td>${typePill(r)}</td>
+      <td>${typePill(r)}${leavePill(r)}</td>
       <td class="mono">${r.inHM ? esc(r.inHM) + `<span class="srcdot ${r.inSrc}"></span>` + rnote(r.inHM, r.inR) : dash()}</td>
       <td class="mono">${r.outHM ? esc(r.outHM) + `<span class="srcdot ${r.outSrc}"></span>` + (r.provisionalOut ? `<span class="muted small"> ${esc(T('month.provisional'))}</span>` : '') + rnote(r.outHM, r.outR) : (r.live ? `<span class="muted">${esc(T('month.working'))}</span>` : dash())}</td>
       <td class="n">${r.lunchMin ? r.lunchMin + "'" : dash()}</td>
@@ -471,7 +474,7 @@ function renderMonth(M) {
       <td>${r.trip ? `<span class="pill trip">${esc(tripText(r))}</span>` : ''}</td>
       <td class="small" style="max-width:220px;white-space:normal">${esc(r.note || (r.dt.type === 'holiday' || r.dt.type === 'comp' ? dayLabel(r.dt) : ''))}</td></tr>`;
   }).join('');
-  const foot = `<tfoot><tr><td class="sticky">${esc(T('col.total'))}</td><td></td><td></td><td></td><td></td><td class="n">${fmtH(t.workedMin)}</td><td class="n">${fmtNum(round2(t.cong + t.paidCong))}</td><td class="n">${fmtH(t.ot150)}</td><td class="n">${fmtH(t.ot200)}</td><td class="n">${fmtH(t.ot300)}</td><td>${esc(T('month.days', { n: t.tripDays }))}</td><td></td></tr></tfoot>`;
+  const foot = `<tfoot><tr><td class="sticky">${esc(T('col.total'))}</td><td></td><td></td><td></td><td></td><td class="n">${fmtH(t.workedMin)}</td><td class="n">${fmtNum(round2(t.cong + t.paidCong + t.paidLeave))}</td><td class="n">${fmtH(t.ot150)}</td><td class="n">${fmtH(t.ot200)}</td><td class="n">${fmtH(t.ot300)}</td><td>${esc(T('month.days', { n: t.tripDays }))}</td><td></td></tr></tfoot>`;
   const tb = $('#monthTable');
   tb.innerHTML = head + '<tbody>' + body + '</tbody>' + foot;
   tb.querySelectorAll('tbody tr').forEach(tr => tr.addEventListener('click', () => openEdit(tr.dataset.key)));
@@ -485,67 +488,96 @@ $('#addDayBtn').addEventListener('click', () => {
 function payBreakdown(M) {
   const rows = M.rows, t = M.totals;
   const sals = [...new Set(rows.filter(r => r.salary).map(r => r.salary.id))];
-  const sum = (f) => rows.reduce((a, r) => a + f(r), 0);
-  const ot = k => Math.round(sum(r => r[k] / 60 * r.hourly * ({ ot150: 1.5, ot200: 2, ot300: 3 })[k]));
+  const single = sals.length === 1 ? rows.find(r => r.salary).salary : null;
   return {
-    single: sals.length === 1 ? rows.find(r => r.salary).salary : null,
-    multi: sals.length > 1,
-    workCong: round2(t.cong), paidCong: t.paidCong,
-    workPay: Math.round(sum(r => r.cong * r.daily)), paidPay: Math.round(sum(r => r.paidCong * r.daily)),
-    ot150Pay: ot('ot150'), ot200Pay: ot('ot200'), ot300Pay: ot('ot300'),
-    otBase: sals.length === 1 ? otBaseOf(rows.find(r => r.salary).salary) : null,
+    single, multi: sals.length > 1, otBase: single ? single.base : null,
+    workCong: round2(t.cong), paidCong: t.paidCong, paidLeave: t.paidLeave, unpaidLeave: t.unpaidLeave,
+    workPay: t.workPay, paidPay: t.holidayPay, leavePay: t.leavePay,
+    ot150Pay: t.ot150Pay, ot200Pay: t.ot200Pay, ot300Pay: t.ot300Pay, D: M.deductions,
   };
 }
 const statusLabel = s => T(s === 'official' ? 'pay.status.official' : 'pay.status.probation');
+const neg = n => n ? '−' + fmtVnd(n) : fmtVnd(0);
+/* Insurance and PIT lines shared by the Pay tab and the exports: [label, detail, amount] */
+function deductionLines(D) {
+  const I = D.insurance, out = [];
+  if (I.due) {
+    const on = T('pay.ins.on', { base: fmtVnd(I.base) }) + (I.capped ? ' ' + T('pay.ins.capped') : '');
+    out.push([T('pay.ins.social'), on, I.social], [T('pay.ins.health'), on, I.health], [T('pay.ins.unemp'), on, I.unemployment]);
+  } else {
+    out.push([T('pay.ins.title'), T('pay.ins.none.' + I.reason), 0]);
+  }
+  if (D.progIncome > 0) {
+    out.push([T('pay.pit.prog'), T('pay.pit.progSub', {
+      income: fmtVnd(D.progIncome), ins: fmtVnd(I.total), fam: fmtVnd(D.family), n: D.dependents, taxable: fmtVnd(D.taxable),
+    }), D.pitProgressive]);
+  }
+  if (D.probationIncome > 0 && D.mode !== 'progressive') {
+    out.push([T('pay.pit.prob'), D.mode === 'commit' ? T('pay.pit.commit')
+      : D.flatDue ? T('pay.pit.flatSub', { income: fmtVnd(D.probationIncome) })
+      : T('pay.pit.below', { income: fmtVnd(D.probationIncome), min: fmtVnd(D.flatThreshold) }), D.pitFlat]);
+  }
+  return out;
+}
 function renderPay(M) {
-  const t = M.totals, b = payBreakdown(M);
-  const statusTxt = b.multi ? T('pay.status.multi') : b.single ? statusLabel(b.single.status) + ' · ' + T('pay.perMonth', { amount: fmtVnd(b.single.amount) }) : T('pay.status.none');
-  $('#payTotal').innerHTML = `<span class="small muted">${esc(T('pay.estimate', { month: monthInline(view.m) }))}</span>
-    <span class="v num">${fmtVnd(t.total)}</span>
+  const t = M.totals, b = payBreakdown(M), D = M.deductions;
+  const statusTxt = b.multi ? T('pay.status.multi') : b.single ? statusLabel(b.single.status) + ' · ' + T('pay.perMonth', { amount: fmtVnd(b.single.gross) }) : T('pay.status.none');
+  $('#payTotal').innerHTML = `<span class="small muted">${esc(T('pay.netEstimate', { month: monthInline(view.m) }))}</span>
+    <span class="v num">${fmtVnd(D.net)}</span>
+    <span class="small">${esc(T('pay.grossLine', { gross: fmtVnd(D.gross), ded: fmtVnd(D.totalDeductions) }))}</span>
     <span class="row small"><span class="pill ${b.single && b.single.status === 'official' ? 'in' : ''}">${esc(statusTxt)}</span><span class="muted">${esc(T('pay.formula', { std: M.std }))}</span></span>
-    ${t.noSalaryDays ? `<div class="notice" style="margin-top:8px">${esc(T('pay.noSalaryWarn', { n: t.noSalaryDays }))}</div>` : ''}
-    ${t.noOtBaseDays ? `<div class="notice" style="margin-top:8px">${esc(T('pay.noOtBaseWarn', { n: t.noOtBaseDays }))}</div>` : ''}`;
+    ${t.noSalaryDays ? `<div class="notice" style="margin-top:8px">${esc(T('pay.noSalaryWarn', { n: t.noSalaryDays }))}</div>` : ''}`;
   const hourly = b.single ? b.otBase / M.std / 8 : null;
-  const unit = (pct) => hourly ? `<br><span class="small muted">${esc(T('pay.perHour', { rate: fmtVnd(hourly), pct }))}</span>` : '';
+  const sub = txt => txt ? `<br><span class="small muted">${esc(txt)}</span>` : '';
+  const unit = pct => hourly ? T('pay.perHour', { rate: fmtVnd(hourly), pct }) : '';
   const hrs = min => esc(T('pay.hours', { h: fmtHdec(min) }));
+  const line = (label, detail, amount, cls = '') => `<tr><td>${label}${sub(detail)}</td><td class="n ${cls}">${amount}</td></tr>`;
+  const sec = k => `<tr><td class="sec" colspan="2">${esc(T(k))}</td></tr>`;
   $('#payLines').innerHTML = `<h3>${esc(T('pay.details'))}</h3><table class="lines" style="margin-top:6px"><tbody>
-    <tr><td>${esc(T('pay.line.work'))}<br><span class="small muted">${esc(T('pay.line.workSub', { n: fmtNum(b.workCong) }))}${b.single ? ' × ' + fmtVnd(b.single.amount / M.std) : ''}</span></td><td class="n">${fmtVnd(b.workPay)}</td></tr>
-    <tr><td>${esc(T('pay.line.paid'))}<br><span class="small muted">${esc(T('pay.line.paidSub', { n: b.paidCong }))}</span></td><td class="n">${fmtVnd(b.paidPay)}</td></tr>
-    <tr><td><span class="pill r150">${esc(T('pay.line.ot150'))}</span> ${hrs(t.ot150)}${unit(150)}</td><td class="n">${fmtVnd(b.ot150Pay)}</td></tr>
-    <tr><td><span class="pill r200">${esc(T('pay.line.ot200'))}</span> ${hrs(t.ot200)}${unit(200)}</td><td class="n">${fmtVnd(b.ot200Pay)}</td></tr>
-    <tr><td><span class="pill r300">${esc(T('pay.line.ot300'))}</span> ${hrs(t.ot300)}${unit(300)}</td><td class="n">${fmtVnd(b.ot300Pay)}</td></tr>
-    <tr><td>${esc(T('pay.line.total'))}</td><td class="n">${fmtVnd(t.total)}</td></tr></tbody></table>`;
-  renderSalaries();
+    ${sec('pay.sec.income')}
+    ${line(esc(T('pay.line.work')), T('pay.line.workSub', { n: fmtNum(b.workCong) }) + (b.single ? ' × ' + fmtVnd(b.single.gross / M.std) : ''), fmtVnd(b.workPay))}
+    ${line(esc(T('pay.line.paid')), T('pay.line.paidSub', { n: b.paidCong }), fmtVnd(b.paidPay))}
+    ${line(esc(T('pay.line.leave')), T('pay.line.leaveSub', { n: fmtNum(b.paidLeave) }) + (b.single ? ' × ' + fmtVnd(b.single.base / M.std) : ''), fmtVnd(b.leavePay))}
+    ${line(`<span class="pill r150">${esc(T('pay.line.ot150'))}</span> ${hrs(t.ot150)}`, unit(150), fmtVnd(b.ot150Pay))}
+    ${line(`<span class="pill r200">${esc(T('pay.line.ot200'))}</span> ${hrs(t.ot200)}`, unit(200), fmtVnd(b.ot200Pay))}
+    ${line(`<span class="pill r300">${esc(T('pay.line.ot300'))}</span> ${hrs(t.ot300)}`, unit(300), fmtVnd(b.ot300Pay))}
+    <tr class="sub"><td>${esc(T('pay.line.gross'))}${sub(T('pay.line.grossSub', { ot: fmtVnd(t.otPay) }))}</td><td class="n">${fmtVnd(D.gross)}</td></tr>
+    ${sec('pay.sec.deduct')}
+    ${deductionLines(D).map(([l, d, a]) => line(esc(l), d, neg(a), a ? 'neg' : '')).join('')}
+    <tr class="sub"><td>${esc(T('pay.line.deductTotal'))}</td><td class="n neg">${neg(D.totalDeductions)}</td></tr>
+    <tr><td>${esc(T('pay.line.net'))}</td><td class="n">${fmtVnd(D.net)}</td></tr></tbody></table>
+    <p class="small muted" style="margin-bottom:0">${esc(T('pay.note'))}</p>`;
+  renderLeaveCard(M);
+  renderContractSummary(M);
 }
-function renderSalaries() {
-  const list = settings.salaries.slice().sort((a, b) => a.from < b.from ? 1 : -1);
-  $('#salList').innerHTML = list.length ? list.map(s => `<li><span data-edit-sal="${s.id}" style="cursor:pointer"><b class="num">${fmtVnd(s.amount)}</b> <span class="pill ${s.status === 'official' ? 'in' : ''}">${esc(statusLabel(s.status))}</span><br><span class="small ${s.otBase > 0 ? 'muted' : ''}">${esc(s.otBase > 0 ? T('pay.otBaseIs', { amount: fmtVnd(s.otBase) }) : T('pay.otBaseMissing'))}</span></span><span class="small muted">${esc(T('pay.from', { d: fmtDMY(s.from) }))}</span><button class="x-btn" data-del-sal="${s.id}" aria-label="${esc(T('pay.deleteRate'))}">✕</button></li>`).join('')
-    : `<li class="empty small" style="display:block">${esc(T('pay.empty'))}</li>`;
-  $$('[data-edit-sal]').forEach(x => x.onclick = () => {
-    const s = settings.salaries.find(v => v.id === x.dataset.editSal); if (!s) return;
-    $('#salFrom').value = s.from; amountInput.value = fmtNum(s.amount);
-    otBaseInput.value = s.otBase > 0 ? fmtNum(s.otBase) : ''; $('#salStatus').value = s.status;
-    (s.otBase > 0 ? amountInput : otBaseInput).focus(); toast(T('pay.editing'));
-  });
-  $$('[data-del-sal]').forEach(x => x.onclick = () => {
-    settings.salaries = settings.salaries.filter(s => s.id !== x.dataset.delSal); saveSettings(); renderMonthViews(); toast(T('pay.deleted'));
-  });
+/* Annual leave needs every month of the year */
+const loadedYears = new Set();
+async function ensureYear(y) {
+  if (loadedYears.has(y)) return false;
+  for (let m = 1; m <= 12; m++) await ensureMonth(y, m);
+  loadedYears.add(y); return true;
 }
-const amountInput = $('#salAmount'), otBaseInput = $('#salOtBase');
-[amountInput, otBaseInput].forEach(inp => inp.addEventListener('input', () => {
-  const digits = inp.value.replace(/\D/g, '');
-  inp.value = digits ? fmtNum(+digits) : '';
-}));
-$('#salForm').addEventListener('submit', e => {
-  e.preventDefault();
-  const amount = +amountInput.value.replace(/\D/g, '');
-  const otBase = +otBaseInput.value.replace(/\D/g, '');
-  const from = $('#salFrom').value;
-  if (!amount || !otBase || !from) { toast(T('pay.needBoth')); return; }
-  settings.salaries = settings.salaries.filter(s => s.from !== from);
-  settings.salaries.push({ id: 's' + Date.now(), from, amount, otBase, status: $('#salStatus').value });
-  saveSettings(); amountInput.value = ''; otBaseInput.value = ''; renderMonthViews(); toast(T('pay.saved'));
-});
+function renderLeaveCard(M) {
+  const u = leaveUsed(view.y, m => (months[monthKey(view.y, m)] || {}).days, settings);
+  const t = M.totals;
+  $('#payLeave').innerHTML = `<h3>${esc(T('lv.title'))}</h3>
+    <div class="stats" style="margin-top:10px">
+      <div class="stat"><div class="k">${esc(T('lv.used', { y: view.y }))}</div><div class="v">${fmtNum(u.used)} / ${fmtNum(u.quota)}</div></div>
+      <div class="stat ${u.left < 0 ? 'r300' : 'r200'}"><div class="k">${esc(T('lv.left'))}</div><div class="v">${fmtNum(u.left)}</div></div>
+      <div class="stat"><div class="k">${esc(T('lv.month'))}</div><div class="v">${fmtNum(t.paidLeave)} · ${fmtNum(t.unpaidLeave)}</div></div>
+    </div>
+    ${u.left < 0 ? `<div class="notice" style="margin-top:10px">${esc(T('lv.over', { n: fmtNum(-u.left) }))}</div>` : ''}
+    <p class="small muted" style="margin-bottom:0">${esc(T('lv.hint'))}</p>`;
+  ensureYear(view.y).then(loaded => { if (loaded && !$('#view-pay').hidden) renderLeaveCard(curMonthCalc()); });
+}
+function renderContractSummary(M) {
+  const C = M.contract;
+  const item = (k, p) => p.from && p.gross > 0 ? `<li><span><b>${esc(T(k))}</b><br><span class="small muted">${esc(fmtDMY(p.from))} – ${esc(p.to ? fmtDMY(p.to) : T('ct.openEnded'))}</span></span><span class="small" style="text-align:right">${esc(T('ct.grossIs', { amount: fmtVnd(p.gross) }))}<br><span class="muted">${esc(T('ct.baseIs', { amount: fmtVnd(p.base > 0 ? p.base : p.gross) }))}</span></span></li>` : '';
+  const list = item('ct.probation', C.probation) + item('ct.official', C.official);
+  $('#payContract').innerHTML = `<div class="spread"><h3>${esc(T('ct.title'))}</h3><button class="btn sm" id="goContract">${esc(T('ct.edit'))}</button></div>
+    <ul class="sal-list" style="margin-top:12px">${list || `<li class="empty small" style="display:block">${esc(T('ct.empty'))}</li>`}</ul>`;
+  $('#goContract').onclick = () => { showTab('settings'); $('#contractCard').scrollIntoView({ block: 'start' }); };
+}
 
 /* ---------- Edit a day ---------- */
 let editKey = null, delArmed = false;
@@ -560,6 +592,13 @@ async function openEdit(key) {
   $('#edOut').value = rec.manualOut || g.out || '';
   $('#edNote').value = rec.note || '';
   $('#edTrip').checked = !!(rec.manualTrip || (g.trips && g.trips.length));
+  const lv = rec.leave || {};
+  $('#edLeavePaid').checked = lv.type === 'paid'; $('#edLeaveUnpaid').checked = lv.type === 'unpaid';
+  $('#edLeavePart').value = lv.part || 'full';
+  const leaveable = dt.type === 'weekday' || dt.type === 'saturday';
+  $('#edLeaveBox').hidden = !leaveable;
+  $('#edLeavePart').closest('label').hidden = dt.type === 'saturday';
+  syncLeavePart();
   $('#edGps').textContent = g.in || g.out || (g.trips && g.trips.length)
     ? T('edit.gpsInfo', {
       in: g.in || '—', out: g.out || '—',
@@ -570,6 +609,9 @@ async function openEdit(key) {
   $('#editModal').hidden = false; $('#edIn').focus();
 }
 function closeEdit() { $('#editModal').hidden = true; editKey = null; }
+function syncLeavePart() { $('#edLeavePart').disabled = !$('#edLeavePaid').checked && !$('#edLeaveUnpaid').checked; }
+$('#edLeavePaid').addEventListener('change', () => { if ($('#edLeavePaid').checked) $('#edLeaveUnpaid').checked = false; syncLeavePart(); });
+$('#edLeaveUnpaid').addEventListener('change', () => { if ($('#edLeaveUnpaid').checked) $('#edLeavePaid').checked = false; syncLeavePart(); });
 $('#edClose').addEventListener('click', closeEdit);
 $('#editModal').addEventListener('click', e => { if (e.target.id === 'editModal') closeEdit(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#editModal').hidden) closeEdit(); });
@@ -590,6 +632,10 @@ $('#edSave').addEventListener('click', () => {
   rec.note = $('#edNote').value.trim();
   rec.manualTrip = $('#edTrip').checked && !(g.trips && g.trips.length) ? true : false;
   if (!$('#edTrip').checked && g.trips && g.trips.length) g.trips = [];
+  const lvType = $('#edLeavePaid').checked ? 'paid' : $('#edLeaveUnpaid').checked ? 'unpaid' : null;
+  const prevLv = JSON.stringify(rec.leave || null);
+  rec.leave = lvType && !$('#edLeaveBox').hidden ? { type: lvType, part: dayType(key, settings.holidays).type === 'saturday' ? 'full' : $('#edLeavePart').value } : null;
+  if (JSON.stringify(rec.leave) !== prevLv) logEvent(rec, nowHM(), 'edit.leave.' + (rec.leave ? rec.leave.type + '.' + rec.leave.part : 'none'));
   if (changed) logEvent(rec, nowHM(), 'edit', { in: vin || '—', out: vout || '—' });
   touch(key); closeEdit(); afterEdit(); toast(T('edit.saved', { d: fmtDM(key) }));
 });
@@ -618,6 +664,7 @@ function renderSettings() {
   $('#wRoundMin').value = w.roundMin; $('#wRoundMode').value = w.roundMode;
   const sel = $('#wStd'); if (![...sel.options].some(op => op.value === String(w.stdDaysMode))) sel.add(new Option(T('set.std.n', { n: w.stdDaysMode }), w.stdDaysMode)); sel.value = String(w.stdDaysMode);
   renderHolidays();
+  renderContract();
   $('#autoCard').hidden = !NATIVE;
   $('#wTrackStart').value = w.trackStart; $('#wTrackEnd').value = w.trackEnd;
   if (NATIVE && Native.geo) Native.geo.getStatus().then(st => renderWifiList(st.wifiNetworks || [], st.wifiCanScan)).catch(() => {});
@@ -687,6 +734,42 @@ $('#holForm').addEventListener('submit', e => {
   saveSettings(); renderHolidays(); $('#holName').value = ''; toast(T('set.holAdded', { d: fmtDMY(date) }));
 });
 
+/* ---------- Contract & salary ---------- */
+const moneyVal = sel => +($(sel).value || '').replace(/\D/g, '');
+const moneySet = (sel, n) => { $(sel).value = n > 0 ? fmtNum(n) : ''; };
+$$('[data-money]').forEach(inp => inp.addEventListener('input', () => {
+  const digits = inp.value.replace(/\D/g, ''); inp.value = digits ? fmtNum(+digits) : '';
+}));
+function renderContract() {
+  const C = contractOf(settings);
+  $('#ctPFrom').value = C.probation.from || ''; $('#ctPTo').value = C.probation.to || '';
+  moneySet('#ctPBase', C.probation.base); moneySet('#ctPGross', C.probation.gross);
+  $('#ctOFrom').value = C.official.from || ''; $('#ctOTo').value = C.official.to || '';
+  moneySet('#ctOBase', C.official.base); moneySet('#ctOGross', C.official.gross);
+  $('#ctDeps').value = C.dependents || 0; $('#ctProbTax').value = C.probationTax || 'flat10';
+  $('#ctLeaveDays').value = C.leaveDaysPerYear;
+}
+function readContract(changed) {
+  const p = { from: $('#ctPFrom').value, to: $('#ctPTo').value, base: moneyVal('#ctPBase'), gross: moneyVal('#ctPGross') };
+  const o = { from: $('#ctOFrom').value, to: $('#ctOTo').value, base: moneyVal('#ctOBase'), gross: moneyVal('#ctOGross') };
+  // Permanent start entered and probation end empty → probation ends the day before
+  if (changed === '#ctOFrom' && o.from && p.from && !p.to && p.from < o.from) { p.to = addDays(o.from, -1); $('#ctPTo').value = p.to; }
+  if (changed === '#ctPTo' && p.to && !o.from) { o.from = addDays(p.to, 1); $('#ctOFrom').value = o.from; }
+  for (const x of [p, o]) if (x.from && x.to && x.to < x.from) { toast(T('ct.badRange')); return; }
+  if (p.base > p.gross && p.gross || o.base > o.gross && o.gross) toast(T('ct.baseOverGross'));
+  if (p.to && o.from && p.to >= o.from) toast(T('ct.overlap'));
+  settings.contract = {
+    probation: p, official: o,
+    dependents: Math.max(0, Math.floor(num($('#ctDeps').value, 0))),
+    probationTax: $('#ctProbTax').value || 'flat10',
+    leaveDaysPerYear: Math.max(0, num($('#ctLeaveDays').value, 12)),
+  };
+  settings.salaries = []; // replaced by the contract
+  saveSettings(); renderMonthViews(); toast(T('ct.saved'));
+}
+['#ctPFrom', '#ctPTo', '#ctPBase', '#ctPGross', '#ctOFrom', '#ctOTo', '#ctOBase', '#ctOGross', '#ctDeps', '#ctProbTax', '#ctLeaveDays']
+  .forEach(sel => $(sel).addEventListener('change', () => readContract(sel)));
+
 /* ---------- Files ---------- */
 async function saveFile(filename, blob) {
   if (NATIVE) {
@@ -728,7 +811,7 @@ function reportHeader(M) {
   const b = payBreakdown(M);
   return {
     b,
-    salaryTxt: b.multi ? T('x.salaryMulti') : b.single ? T('x.salaryPerMonth', { amount: fmtNum(b.single.amount) }) : T('x.salaryNone'),
+    salaryTxt: b.multi ? T('x.salaryMulti') : b.single ? T('x.salaryPerMonth', { amount: fmtNum(b.single.gross) }) : T('x.salaryNone'),
     otBaseTxt: b.multi ? T('x.salaryMulti') : b.single ? T('x.salaryPerMonth', { amount: fmtNum(b.otBase) }) : T('x.salaryNone'),
     statusTxt: b.multi ? T('x.statusMulti') : b.single ? statusLabel(b.single.status) : '—',
   };
@@ -746,32 +829,37 @@ $('#xlsxBtn').addEventListener('click', async () => {
       [T('x.employee'), settings.name || '', '', T('x.status'), h.statusTxt, '', T('x.salary'), h.salaryTxt, '', T('x.otBase'), h.otBaseTxt],
       [T('x.std'), M.std, '', T('x.hourly'), b.single ? Math.round(b.otBase / M.std / 8) : T('x.hourlyPerDay'), '', T('x.exportedAt'), new Date().toLocaleString(LOCALE())],
       [],
-      ['date', 'dow', 'type', 'in', 'inR', 'inSrc', 'out', 'outR', 'outSrc', 'lunch', 'worked', 'cong', 'paid', 'ot150', 'ot200', 'ot300', 'trip', 'dayPay', 'otPay', 'dayTotal', 'note'].map(C),
+      ['date', 'dow', 'type', 'in', 'inR', 'inSrc', 'out', 'outR', 'outSrc', 'lunch', 'worked', 'cong', 'paid', 'leave', 'ot150', 'ot200', 'ot300', 'trip', 'dayPay', 'otPay', 'dayTotal', 'note'].map(C),
     ];
     M.rows.forEach(r => aoa.push([
       fmtDMY(r.key), dowShort(r.dt.dow), dayLabel(r.dt),
       r.inHM || '', r.inR || '', srcTxt(r.inSrc), r.outHM || (r.live ? T('month.working') : r.missingOut ? T('x.missing') : ''), r.outHM ? (r.outR || '') : '', srcTxt(r.outSrc),
-      r.lunchMin || '', r.workedMin ? hdec(r.workedMin) : '', r.cong || '', r.paidCong || '',
+      r.lunchMin || '', r.workedMin ? hdec(r.workedMin) : '', r.cong || '', r.paidCong || '', r.leave ? leaveText(r.leave) : '',
       r.ot150 ? hdec(r.ot150) : '', r.ot200 ? hdec(r.ot200) : '', r.ot300 ? hdec(r.ot300) : '',
       r.trip ? (r.trips.length ? r.trips.map(x => x.start + '-' + (x.end || '?')).join(', ') : T('month.yes')) : '',
       r.basePay || '', r.otPay || '', r.total || '', r.note || '',
     ]));
-    aoa.push([T('x.total'), '', '', '', '', '', '', '', '', '', hdec(t.workedMin), round2(t.cong), t.paidCong, hdec(t.ot150), hdec(t.ot200), hdec(t.ot300), T('x.unit.days', { n: t.tripDays }), t.basePay, t.otPay, t.total, '']);
+    aoa.push([T('x.total'), '', '', '', '', '', '', '', '', '', hdec(t.workedMin), round2(t.cong), t.paidCong, T('x.leaveTotal', { p: fmtNum(t.paidLeave), u: fmtNum(t.unpaidLeave) }), hdec(t.ot150), hdec(t.ot200), hdec(t.ot300), T('x.unit.days', { n: t.tripDays }), t.basePay, t.otPay, t.total, '']);
     aoa.push([]);
     aoa.push([T('x.summary')]);
-    const line = (label, qty, amount) => [label, '', '', qty, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', amount];
+    const line = (label, qty, amount) => { const a = Array(22).fill(''); a[0] = label; a[3] = qty; a[20] = amount; return a; };
+    const D = b.D;
     aoa.push(line(T('x.line.work'), T('x.unit.workdays', { n: b.workCong }), b.workPay));
     aoa.push(line(T('x.line.paid'), T('x.unit.days', { n: b.paidCong }), b.paidPay));
+    aoa.push(line(T('x.line.leave'), T('x.unit.days', { n: b.paidLeave }), b.leavePay));
     aoa.push(line(T('x.line.ot150'), T('x.unit.hours', { n: hdec(t.ot150) }), b.ot150Pay));
     aoa.push(line(T('x.line.ot200'), T('x.unit.hours', { n: hdec(t.ot200) }), b.ot200Pay));
     aoa.push(line(T('x.line.ot300'), T('x.unit.hours', { n: hdec(t.ot300) }), b.ot300Pay));
-    aoa.push(line(T('x.line.total'), '', t.total));
+    aoa.push(line(T('x.line.gross'), '', D.gross));
+    deductionLines(D).forEach(([l, d, a]) => aoa.push(line(l, d, a ? -a : 0)));
+    aoa.push(line(T('x.line.deductTotal'), '', -D.totalDeductions));
+    aoa.push(line(T('x.line.net'), '', D.net));
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [12, 5, 22, 8, 11, 9, 9, 11, 9, 10, 10, 10, 12, 11, 11, 11, 16, 16, 13, 14, 30].map(w => ({ wch: w }));
+    ws['!cols'] = [12, 5, 22, 8, 11, 9, 9, 11, 9, 10, 10, 10, 12, 16, 11, 11, 11, 16, 16, 13, 14, 30].map(w => ({ wch: w }));
     ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }];
-    const moneyCols = [17, 18, 19];
+    const moneyCols = [18, 19, 20];
     for (let R = 5; R < aoa.length; R++) moneyCols.forEach(Cc => { const c = ws[XLSX.utils.encode_cell({ r: R, c: Cc })]; if (c && typeof c.v === 'number') c.z = '#,##0'; });
-    ws['!autofilter'] = { ref: 'A5:U' + (5 + M.rows.length) };
+    ws['!autofilter'] = { ref: 'A5:V' + (5 + M.rows.length) };
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, T('x.sheet', { mm: pad(view.m), yyyy: view.y }));
     const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     await saveFile(fileBase() + '.xlsx', new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
@@ -787,27 +875,31 @@ $('#pdfBtn').addEventListener('click', async () => {
     const stage = $('#pdfStage');
     const P = k => esc(T('pdf.col.' + k));
     const head = `<tr><th>${P('date')}</th><th>${P('dow')}</th><th>${P('type')}</th><th>${P('in')}</th><th>${P('out')}</th><th class="n">${P('lunch')}</th><th class="n">${P('worked')}</th><th class="n">${P('cong')}</th><th class="n">OT 150%</th><th class="n">OT 200%</th><th class="n">OT 300%</th><th>${P('trip')}</th><th class="n">${P('amount')}</th><th>${P('note')}</th></tr>`;
-    const row = r => `<tr><td>${esc(fmtDM(r.key))}</td><td>${esc(dowShort(r.dt.dow))}</td><td>${esc(dayLabel(r.dt))}</td><td>${r.inHM ? r.inHM + (r.inR && r.inR !== r.inHM ? ' → ' + r.inR : '') + (r.inSrc === 'gps' ? ' (GPS)' : '') : ''}</td><td>${r.outHM ? r.outHM + (r.outR && r.outR !== r.outHM ? ' → ' + r.outR : '') + (r.outSrc === 'gps' ? ' (GPS)' : '') : r.missingOut ? esc(T('pdf.missing')) : ''}</td><td class="n">${r.lunchMin || ''}</td><td class="n">${r.workedMin ? fmtH(r.workedMin) : ''}</td><td class="n">${(r.cong + r.paidCong) ? fmtNum(r.cong + r.paidCong) : ''}</td><td class="n">${r.ot150 ? fmtH(r.ot150) : ''}</td><td class="n">${r.ot200 ? fmtH(r.ot200) : ''}</td><td class="n">${r.ot300 ? fmtH(r.ot300) : ''}</td><td>${r.trip ? esc(tripText(r)) : ''}</td><td class="n">${r.total ? fmtNum(r.total) : ''}</td><td>${esc(r.note)}</td></tr>`;
+    const row = r => `<tr><td>${esc(fmtDM(r.key))}</td><td>${esc(dowShort(r.dt.dow))}</td><td>${esc(dayLabel(r.dt))}</td><td>${r.inHM ? r.inHM + (r.inR && r.inR !== r.inHM ? ' → ' + r.inR : '') + (r.inSrc === 'gps' ? ' (GPS)' : '') : ''}</td><td>${r.outHM ? r.outHM + (r.outR && r.outR !== r.outHM ? ' → ' + r.outR : '') + (r.outSrc === 'gps' ? ' (GPS)' : '') : r.missingOut ? esc(T('pdf.missing')) : ''}</td><td class="n">${r.lunchMin || ''}</td><td class="n">${r.workedMin ? fmtH(r.workedMin) : ''}</td><td class="n">${(r.cong + r.paidCong + r.paidLeave) ? fmtNum(r.cong + r.paidCong + r.paidLeave) : ''}</td><td class="n">${r.ot150 ? fmtH(r.ot150) : ''}</td><td class="n">${r.ot200 ? fmtH(r.ot200) : ''}</td><td class="n">${r.ot300 ? fmtH(r.ot300) : ''}</td><td>${r.trip ? esc(tripText(r)) : ''}</td><td class="n">${r.total ? fmtNum(r.total) : ''}</td><td>${esc([r.leave ? leaveText(r.leave) : '', r.note].filter(Boolean).join(' · '))}</td></tr>`;
     const metaItem = (k, v) => `<span>${esc(T(k))}: <b>${esc(v)}</b></span>`;
     const meta = `<div class="meta">${metaItem('x.employee', settings.name || '—')}${metaItem('x.status', h.statusTxt)}${metaItem('x.salary', h.salaryTxt)}${metaItem('x.otBase', h.otBaseTxt)}${metaItem('x.std', M.std)}</div>`;
     const rows = M.rows, chunks = [rows.slice(0, 16), rows.slice(16)];
     const totalPages = 3;
     const foot = p => `<div class="foot"><span>${esc(T('pdf.footer'))}</span><span>${esc(T('pdf.page', { p, n: totalPages }))}</span></div>`;
     const mt = { month: monthInline(view.m), year: view.y };
-    const sumRow = (label, qty, amount) => `<tr><td>${esc(label)}</td><td class="n">${esc(qty)}</td><td class="n">${fmtNum(amount)}</td></tr>`;
+    const sumRow = (label, qty, amount) => `<tr><td>${esc(label)}</td><td class="n" style="white-space:nowrap">${esc(qty)}</td><td class="n">${fmtNum(amount)}</td></tr>`;
     const pages = [
       `<div class="pdf-page"><h1>${esc(T('pdf.title', mt))}</h1>${meta}<table>${head}${chunks[0].map(row).join('')}</table>${foot(1)}</div>`,
-      `<div class="pdf-page"><table>${head}${chunks[1].map(row).join('')}<tr><th colspan="6">${esc(T('col.total'))}</th><th class="n">${fmtH(t.workedMin)}</th><th class="n">${fmtNum(round2(t.cong + t.paidCong))}</th><th class="n">${fmtH(t.ot150)}</th><th class="n">${fmtH(t.ot200)}</th><th class="n">${fmtH(t.ot300)}</th><th>${esc(T('month.days', { n: t.tripDays }))}</th><th class="n">${fmtNum(t.total)}</th><th></th></tr></table>${foot(2)}</div>`,
+      `<div class="pdf-page"><table>${head}${chunks[1].map(row).join('')}<tr><th colspan="6">${esc(T('col.total'))}</th><th class="n">${fmtH(t.workedMin)}</th><th class="n">${fmtNum(round2(t.cong + t.paidCong + t.paidLeave))}</th><th class="n">${fmtH(t.ot150)}</th><th class="n">${fmtH(t.ot200)}</th><th class="n">${fmtH(t.ot300)}</th><th>${esc(T('month.days', { n: t.tripDays }))}</th><th class="n">${fmtNum(t.total)}</th><th></th></tr></table>${foot(2)}</div>`,
       `<div class="pdf-page"><h1>${esc(T('pdf.payTitle', mt))}</h1>${meta}
-        <table style="width:640px;font-size:14px">
+        <table style="width:100%;font-size:12px">
         <tr><th>${esc(T('pdf.item'))}</th><th class="n">${esc(T('pdf.qty'))}</th><th class="n">${esc(T('pdf.amountVnd'))}</th></tr>
         ${sumRow(T('x.line.work'), T('x.unit.workdays', { n: fmtNum(b.workCong) }), b.workPay)}
         ${sumRow(T('x.line.paid'), T('x.unit.days', { n: b.paidCong }), b.paidPay)}
+        ${sumRow(T('x.line.leave'), T('x.unit.days', { n: fmtNum(b.paidLeave) }), b.leavePay)}
         ${sumRow(T('x.line.ot150'), T('x.unit.hours', { n: fmtHdec(t.ot150) }), b.ot150Pay)}
         ${sumRow(T('x.line.ot200'), T('x.unit.hours', { n: fmtHdec(t.ot200) }), b.ot200Pay)}
         ${sumRow(T('x.line.ot300'), T('x.unit.hours', { n: fmtHdec(t.ot300) }), b.ot300Pay)}
-        <tr><th>${esc(T('pdf.totalLine'))}</th><th></th><th class="n">${fmtNum(t.total)}</th></tr></table>
-        <p style="color:var(--pdf-muted);max-width:640px">${esc(T('pdf.method', { std: M.std, sat: settings.work.satStdHours, round: settings.work.roundMin, block: settings.work.otBlockMin }))}</p>${foot(3)}</div>`,
+        <tr><th>${esc(T('x.line.gross'))}</th><th></th><th class="n">${fmtNum(b.D.gross)}</th></tr>
+        ${deductionLines(b.D).map(([l, d, a]) => `<tr><td>${esc(l)} <span style="color:var(--pdf-muted);font-size:10px">· ${esc(d)}</span></td><td></td><td class="n">${a ? '−' + fmtNum(a) : '0'}</td></tr>`).join('')}
+        <tr><th>${esc(T('x.line.deductTotal'))}</th><th></th><th class="n">${b.D.totalDeductions ? '−' : ''}${fmtNum(b.D.totalDeductions)}</th></tr>
+        <tr><th>${esc(T('pdf.totalLine'))}</th><th></th><th class="n">${fmtNum(b.D.net)}</th></tr></table>
+        <p style="color:var(--pdf-muted);font-size:10px;line-height:1.35;margin:8px 0 0">${esc(T('pdf.method', { std: M.std, sat: settings.work.satStdHours, round: settings.work.roundMin, block: settings.work.otBlockMin }))}</p>${foot(3)}</div>`,
     ];
     stage.innerHTML = pages.join('');
     const { jsPDF } = window.jspdf;
@@ -857,7 +949,7 @@ function mergeSettings(s) {
   if (work.roundRule !== 2) { work.roundMode = 'down'; work.roundRule = 2; } // company rule: round down
   const office = { ...d.office, ...(s.office || {}) };
   if (office.name === 'Văn phòng') office.name = ''; // old default name → shown as "the office" in each language
-  return { ...d, ...s, lang: s.lang || null, office, work, salaries: s.salaries || [], holidays: migrateHolidays(s.holidays || d.holidays) };
+  return { ...d, ...s, lang: s.lang || null, office, work, salaries: s.salaries || [], contract: contractOf(s), holidays: migrateHolidays(s.holidays || d.holidays) };
 }
 function renderAll() { renderToday(); renderMonthViews(); if (!$('#view-settings').hidden) renderSettings(); }
 function setStoreChip() {

@@ -92,17 +92,8 @@
     </div>
     <div class="card pay-total" id="payTotal"></div>
     <div class="card" id="payLines"></div>
-    <div class="card">
-      <div class="spread"><h3 data-i18n="pay.rates">Your pay rates</h3><span class="small muted" data-i18n="pay.ratesHint">Probation and permanent pay apply from their start dates. Day pay uses gross pay; overtime uses the contract base salary.</span></div>
-      <ul class="sal-list" id="salList" style="margin-top:12px"></ul>
-      <form id="salForm" class="fields" style="margin-top:14px;align-items:end">
-        <label class="f"><span data-i18n="pay.f.from">Applies from</span><input type="date" id="salFrom" required></label>
-        <label class="f"><span data-i18n="pay.f.amount">Gross monthly pay (VND)</span><input type="text" inputmode="numeric" id="salAmount" placeholder="10,000,000" required></label>
-        <label class="f"><span data-i18n="pay.f.otBase">Contract base salary for OT (VND)</span><input type="text" inputmode="numeric" id="salOtBase" placeholder="6,000,000" required></label>
-        <label class="f"><span data-i18n="pay.f.status">Status</span><select id="salStatus"><option value="probation" data-i18n="pay.status.probation">Probation</option><option value="official" data-i18n="pay.status.official">Permanent</option></select></label>
-        <button class="btn primary" type="submit" data-i18n="pay.f.save">Save pay rate</button>
-      </form>
-    </div>
+    <div class="card" id="payLeave"></div>
+    <div class="card" id="payContract"></div>
   </section>
 
   <!-- SETTINGS -->
@@ -114,6 +105,31 @@
           <label class="f"><span data-i18n="set.lang">Language</span><select id="setLang"><option value="en">English</option><option value="vi">Tiếng Việt</option></select></label>
           <label class="f"><span data-i18n="set.name">Full name (printed on timesheets)</span><input id="setName" data-i18n-ph="set.namePh" placeholder="Jane Nguyen"></label>
         </div>
+      </div>
+      <div class="card" id="contractCard">
+        <h3 data-i18n="ct.title">Contract &amp; salary</h3>
+        <p class="small muted" style="margin:6px 0 0" data-i18n="ct.desc">Set this once. Every month's pay, insurance and tax is calculated from it.</p>
+        <h4 class="ct-h" data-i18n="ct.probation">Probation</h4>
+        <div class="fields">
+          <label class="f"><span data-i18n="ct.from">Start date</span><input type="date" id="ctPFrom"></label>
+          <label class="f"><span data-i18n="ct.to">End date</span><input type="date" id="ctPTo"></label>
+          <label class="f"><span data-i18n="ct.base">Base salary on the contract (VND)</span><input type="text" inputmode="numeric" id="ctPBase" placeholder="8,000,000" data-money></label>
+          <label class="f"><span data-i18n="ct.gross">Gross monthly pay (VND)</span><input type="text" inputmode="numeric" id="ctPGross" placeholder="12,000,000" data-money></label>
+        </div>
+        <h4 class="ct-h" data-i18n="ct.official">Permanent</h4>
+        <div class="fields">
+          <label class="f"><span data-i18n="ct.from">Start date</span><input type="date" id="ctOFrom"></label>
+          <label class="f"><span data-i18n="ct.to">End date</span><input type="date" id="ctOTo"><span class="hint" data-i18n="ct.toHint">Leave empty if open-ended</span></label>
+          <label class="f"><span data-i18n="ct.baseIns">Base salary on the contract, for social insurance (VND)</span><input type="text" inputmode="numeric" id="ctOBase" placeholder="10,000,000" data-money></label>
+          <label class="f"><span data-i18n="ct.gross">Gross monthly pay (VND)</span><input type="text" inputmode="numeric" id="ctOGross" placeholder="15,000,000" data-money></label>
+        </div>
+        <h4 class="ct-h" data-i18n="ct.taxLeave">Tax and leave</h4>
+        <div class="fields">
+          <label class="f"><span data-i18n="ct.deps">Registered dependants</span><input type="number" min="0" max="20" step="1" id="ctDeps"><span class="hint" data-i18n="ct.depsHint">6,200,000 VND deduction each per month</span></label>
+          <label class="f"><span data-i18n="ct.probTax">Tax during probation</span><select id="ctProbTax"><option value="flat10" data-i18n="ct.probTax.flat10">10% withheld (probation contract under 3 months)</option><option value="progressive" data-i18n="ct.probTax.progressive">Progressive (probation within a contract of 3+ months)</option><option value="commit" data-i18n="ct.probTax.commit">None: I signed the no-withholding commitment</option></select></label>
+          <label class="f"><span data-i18n="ct.leaveDays">Annual leave days per year</span><input type="number" min="0" max="60" step="0.5" id="ctLeaveDays"></label>
+        </div>
+        <p class="small muted" style="margin-bottom:0" data-i18n="ct.rule">Day pay = gross ÷ standard workdays. Overtime and paid leave use the base salary. From the permanent start date, 10.5% insurance (8% social, 1.5% health, 1% unemployment) is deducted from the base salary, and personal income tax follows the 2026 law.</p>
       </div>
       <div class="card">
         <div class="spread"><h3 data-i18n="set.office">Workplace</h3><button class="btn sm" id="useHereBtn" data-i18n="set.useHere">Use current location</button></div>
@@ -194,6 +210,11 @@
     </div>
     <p class="small muted" id="edGps" style="margin:0"></p>
     <label class="check"><input type="checkbox" id="edTrip"> <span data-i18n="edit.trip">I went on a business trip this day</span></label>
+    <div class="leave-box" id="edLeaveBox">
+      <label class="check"><input type="checkbox" id="edLeavePaid"> <span data-i18n="edit.leavePaid">Paid annual leave</span></label>
+      <label class="check"><input type="checkbox" id="edLeaveUnpaid"> <span data-i18n="edit.leaveUnpaid">Unpaid leave</span></label>
+      <label class="f" style="min-width:150px"><span data-i18n="edit.leavePart">Leave for</span><select id="edLeavePart"><option value="full" data-i18n="edit.part.full">The whole day</option><option value="am" data-i18n="edit.part.am">The morning</option><option value="pm" data-i18n="edit.part.pm">The afternoon</option></select></label>
+    </div>
     <label class="f"><span data-i18n="edit.note">Note</span><textarea id="edNote" data-i18n-ph="edit.notePh" placeholder="e.g. client visit in Bac Ninh"></textarea></label>
     <div class="row" style="justify-content:space-between">
       <div class="row">
