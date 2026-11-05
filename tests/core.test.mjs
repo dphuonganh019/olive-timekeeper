@@ -50,6 +50,38 @@ test('monthly pay is divided by the number of Mon–Sat standard workdays', () =
   assert.equal(M.totals.otPay, Math.round(0.5 * 1.5 * 50000)); // hourly rate 50,000
 });
 
+test('overtime is paid on the contract base salary, day pay on gross pay', () => {
+  const s = { ...DEFAULT_SETTINGS(), salaries: [{ id: 'a', from: '2026-10-01', amount: 10800000, otBase: 5400000, status: 'official' }] };
+  const M = computeMonth(2026, 10, {
+    '2026-10-06': { manualIn: '08:00', manualOut: '17:43' },  // 1 workday + 0.5 h OT 150%
+    '2026-10-11': { manualIn: '08:00', manualOut: '17:00' },  // Sunday: 8 h OT 200%
+  }, s);
+  assert.equal(M.totals.basePay, 400000);                     // 10,800,000 / 27 (gross)
+  // OT hourly rate = 5,400,000 / 27 / 8 = 25,000
+  assert.equal(M.totals.otPay, Math.round(0.5 * 1.5 * 25000) + 8 * 2 * 25000);
+  assert.equal(M.totals.noOtBaseDays, 0);
+});
+
+test('a pay rate saved without a contract base salary keeps OT on gross pay and is flagged', () => {
+  const s = { ...DEFAULT_SETTINGS(), salaries: [{ id: 'a', from: '2026-10-01', amount: 10800000, status: 'probation' }] };
+  const M = computeMonth(2026, 10, { '2026-10-06': { manualIn: '08:00', manualOut: '17:43' }, '2026-10-07': { manualIn: '08:00', manualOut: '17:00' } }, s);
+  assert.equal(M.totals.otPay, Math.round(0.5 * 1.5 * 50000));
+  assert.equal(M.totals.noOtBaseDays, 1);                     // only the day with OT counts
+});
+
+test('contract base salary changes with the pay rate mid-month', () => {
+  const s = { ...DEFAULT_SETTINGS(), salaries: [
+    { id: 'a', from: '2026-10-01', amount: 10800000, otBase: 5400000, status: 'probation' },
+    { id: 'b', from: '2026-10-15', amount: 13500000, otBase: 10800000, status: 'official' },
+  ] };
+  const M = computeMonth(2026, 10, {
+    '2026-10-06': { manualIn: '08:00', manualOut: '18:00' },  // 1 h OT at 25,000
+    '2026-10-20': { manualIn: '08:00', manualOut: '18:00' },  // 1 h OT at 50,000
+  }, s);
+  assert.equal(M.totals.otPay, 1.5 * 25000 + 1.5 * 50000);
+  assert.equal(M.totals.basePay, 400000 + 500000);
+});
+
 function replay(events, manualIn) {
   const days = { '2026-10-06': manualIn ? { manualIn } : {} }, rt = {};
   const evs = geofenceReplay(events, rt, k => (days[k] = days[k] || {}), S);

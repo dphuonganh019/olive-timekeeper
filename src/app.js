@@ -493,6 +493,7 @@ function payBreakdown(M) {
     workCong: round2(t.cong), paidCong: t.paidCong,
     workPay: Math.round(sum(r => r.cong * r.daily)), paidPay: Math.round(sum(r => r.paidCong * r.daily)),
     ot150Pay: ot('ot150'), ot200Pay: ot('ot200'), ot300Pay: ot('ot300'),
+    otBase: sals.length === 1 ? otBaseOf(rows.find(r => r.salary).salary) : null,
   };
 }
 const statusLabel = s => T(s === 'official' ? 'pay.status.official' : 'pay.status.probation');
@@ -502,8 +503,9 @@ function renderPay(M) {
   $('#payTotal').innerHTML = `<span class="small muted">${esc(T('pay.estimate', { month: monthInline(view.m) }))}</span>
     <span class="v num">${fmtVnd(t.total)}</span>
     <span class="row small"><span class="pill ${b.single && b.single.status === 'official' ? 'in' : ''}">${esc(statusTxt)}</span><span class="muted">${esc(T('pay.formula', { std: M.std }))}</span></span>
-    ${t.noSalaryDays ? `<div class="notice" style="margin-top:8px">${esc(T('pay.noSalaryWarn', { n: t.noSalaryDays }))}</div>` : ''}`;
-  const hourly = b.single ? b.single.amount / M.std / 8 : null;
+    ${t.noSalaryDays ? `<div class="notice" style="margin-top:8px">${esc(T('pay.noSalaryWarn', { n: t.noSalaryDays }))}</div>` : ''}
+    ${t.noOtBaseDays ? `<div class="notice" style="margin-top:8px">${esc(T('pay.noOtBaseWarn', { n: t.noOtBaseDays }))}</div>` : ''}`;
+  const hourly = b.single ? b.otBase / M.std / 8 : null;
   const unit = (pct) => hourly ? `<br><span class="small muted">${esc(T('pay.perHour', { rate: fmtVnd(hourly), pct }))}</span>` : '';
   const hrs = min => esc(T('pay.hours', { h: fmtHdec(min) }));
   $('#payLines').innerHTML = `<h3>${esc(T('pay.details'))}</h3><table class="lines" style="margin-top:6px"><tbody>
@@ -517,25 +519,32 @@ function renderPay(M) {
 }
 function renderSalaries() {
   const list = settings.salaries.slice().sort((a, b) => a.from < b.from ? 1 : -1);
-  $('#salList').innerHTML = list.length ? list.map(s => `<li><span><b class="num">${fmtVnd(s.amount)}</b> <span class="pill ${s.status === 'official' ? 'in' : ''}">${esc(statusLabel(s.status))}</span></span><span class="small muted">${esc(T('pay.from', { d: fmtDMY(s.from) }))}</span><button class="x-btn" data-del-sal="${s.id}" aria-label="${esc(T('pay.deleteRate'))}">✕</button></li>`).join('')
+  $('#salList').innerHTML = list.length ? list.map(s => `<li><span data-edit-sal="${s.id}" style="cursor:pointer"><b class="num">${fmtVnd(s.amount)}</b> <span class="pill ${s.status === 'official' ? 'in' : ''}">${esc(statusLabel(s.status))}</span><br><span class="small ${s.otBase > 0 ? 'muted' : ''}">${esc(s.otBase > 0 ? T('pay.otBaseIs', { amount: fmtVnd(s.otBase) }) : T('pay.otBaseMissing'))}</span></span><span class="small muted">${esc(T('pay.from', { d: fmtDMY(s.from) }))}</span><button class="x-btn" data-del-sal="${s.id}" aria-label="${esc(T('pay.deleteRate'))}">✕</button></li>`).join('')
     : `<li class="empty small" style="display:block">${esc(T('pay.empty'))}</li>`;
+  $$('[data-edit-sal]').forEach(x => x.onclick = () => {
+    const s = settings.salaries.find(v => v.id === x.dataset.editSal); if (!s) return;
+    $('#salFrom').value = s.from; amountInput.value = fmtNum(s.amount);
+    otBaseInput.value = s.otBase > 0 ? fmtNum(s.otBase) : ''; $('#salStatus').value = s.status;
+    (s.otBase > 0 ? amountInput : otBaseInput).focus(); toast(T('pay.editing'));
+  });
   $$('[data-del-sal]').forEach(x => x.onclick = () => {
     settings.salaries = settings.salaries.filter(s => s.id !== x.dataset.delSal); saveSettings(); renderMonthViews(); toast(T('pay.deleted'));
   });
 }
-const amountInput = $('#salAmount');
-amountInput.addEventListener('input', () => {
-  const digits = amountInput.value.replace(/\D/g, '');
-  amountInput.value = digits ? fmtNum(+digits) : '';
-});
+const amountInput = $('#salAmount'), otBaseInput = $('#salOtBase');
+[amountInput, otBaseInput].forEach(inp => inp.addEventListener('input', () => {
+  const digits = inp.value.replace(/\D/g, '');
+  inp.value = digits ? fmtNum(+digits) : '';
+}));
 $('#salForm').addEventListener('submit', e => {
   e.preventDefault();
   const amount = +amountInput.value.replace(/\D/g, '');
+  const otBase = +otBaseInput.value.replace(/\D/g, '');
   const from = $('#salFrom').value;
-  if (!amount || !from) { toast(T('pay.needBoth')); return; }
+  if (!amount || !otBase || !from) { toast(T('pay.needBoth')); return; }
   settings.salaries = settings.salaries.filter(s => s.from !== from);
-  settings.salaries.push({ id: 's' + Date.now(), from, amount, status: $('#salStatus').value });
-  saveSettings(); amountInput.value = ''; renderMonthViews(); toast(T('pay.saved'));
+  settings.salaries.push({ id: 's' + Date.now(), from, amount, otBase, status: $('#salStatus').value });
+  saveSettings(); amountInput.value = ''; otBaseInput.value = ''; renderMonthViews(); toast(T('pay.saved'));
 });
 
 /* ---------- Edit a day ---------- */
@@ -720,6 +729,7 @@ function reportHeader(M) {
   return {
     b,
     salaryTxt: b.multi ? T('x.salaryMulti') : b.single ? T('x.salaryPerMonth', { amount: fmtNum(b.single.amount) }) : T('x.salaryNone'),
+    otBaseTxt: b.multi ? T('x.salaryMulti') : b.single ? T('x.salaryPerMonth', { amount: fmtNum(b.otBase) }) : T('x.salaryNone'),
     statusTxt: b.multi ? T('x.statusMulti') : b.single ? statusLabel(b.single.status) : '—',
   };
 }
@@ -733,8 +743,8 @@ $('#xlsxBtn').addEventListener('click', async () => {
     const C = k => T('x.col.' + k);
     const aoa = [
       [T('x.title', { month: monthName(view.m).toUpperCase(), year: view.y })],
-      [T('x.employee'), settings.name || '', '', T('x.status'), h.statusTxt, '', T('x.salary'), h.salaryTxt],
-      [T('x.std'), M.std, '', T('x.hourly'), b.single ? Math.round(b.single.amount / M.std / 8) : T('x.hourlyPerDay'), '', T('x.exportedAt'), new Date().toLocaleString(LOCALE())],
+      [T('x.employee'), settings.name || '', '', T('x.status'), h.statusTxt, '', T('x.salary'), h.salaryTxt, '', T('x.otBase'), h.otBaseTxt],
+      [T('x.std'), M.std, '', T('x.hourly'), b.single ? Math.round(b.otBase / M.std / 8) : T('x.hourlyPerDay'), '', T('x.exportedAt'), new Date().toLocaleString(LOCALE())],
       [],
       ['date', 'dow', 'type', 'in', 'inR', 'inSrc', 'out', 'outR', 'outSrc', 'lunch', 'worked', 'cong', 'paid', 'ot150', 'ot200', 'ot300', 'trip', 'dayPay', 'otPay', 'dayTotal', 'note'].map(C),
     ];
@@ -779,7 +789,7 @@ $('#pdfBtn').addEventListener('click', async () => {
     const head = `<tr><th>${P('date')}</th><th>${P('dow')}</th><th>${P('type')}</th><th>${P('in')}</th><th>${P('out')}</th><th class="n">${P('lunch')}</th><th class="n">${P('worked')}</th><th class="n">${P('cong')}</th><th class="n">OT 150%</th><th class="n">OT 200%</th><th class="n">OT 300%</th><th>${P('trip')}</th><th class="n">${P('amount')}</th><th>${P('note')}</th></tr>`;
     const row = r => `<tr><td>${esc(fmtDM(r.key))}</td><td>${esc(dowShort(r.dt.dow))}</td><td>${esc(dayLabel(r.dt))}</td><td>${r.inHM ? r.inHM + (r.inR && r.inR !== r.inHM ? ' → ' + r.inR : '') + (r.inSrc === 'gps' ? ' (GPS)' : '') : ''}</td><td>${r.outHM ? r.outHM + (r.outR && r.outR !== r.outHM ? ' → ' + r.outR : '') + (r.outSrc === 'gps' ? ' (GPS)' : '') : r.missingOut ? esc(T('pdf.missing')) : ''}</td><td class="n">${r.lunchMin || ''}</td><td class="n">${r.workedMin ? fmtH(r.workedMin) : ''}</td><td class="n">${(r.cong + r.paidCong) ? fmtNum(r.cong + r.paidCong) : ''}</td><td class="n">${r.ot150 ? fmtH(r.ot150) : ''}</td><td class="n">${r.ot200 ? fmtH(r.ot200) : ''}</td><td class="n">${r.ot300 ? fmtH(r.ot300) : ''}</td><td>${r.trip ? esc(tripText(r)) : ''}</td><td class="n">${r.total ? fmtNum(r.total) : ''}</td><td>${esc(r.note)}</td></tr>`;
     const metaItem = (k, v) => `<span>${esc(T(k))}: <b>${esc(v)}</b></span>`;
-    const meta = `<div class="meta">${metaItem('x.employee', settings.name || '—')}${metaItem('x.status', h.statusTxt)}${metaItem('x.salary', h.salaryTxt)}${metaItem('x.std', M.std)}</div>`;
+    const meta = `<div class="meta">${metaItem('x.employee', settings.name || '—')}${metaItem('x.status', h.statusTxt)}${metaItem('x.salary', h.salaryTxt)}${metaItem('x.otBase', h.otBaseTxt)}${metaItem('x.std', M.std)}</div>`;
     const rows = M.rows, chunks = [rows.slice(0, 16), rows.slice(16)];
     const totalPages = 3;
     const foot = p => `<div class="foot"><span>${esc(T('pdf.footer'))}</span><span>${esc(T('pdf.page', { p, n: totalPages }))}</span></div>`;

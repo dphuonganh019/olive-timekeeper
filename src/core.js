@@ -82,7 +82,7 @@ const DEFAULT_SETTINGS = () => ({
     trackStart: '05:30',     // start waiting for check-in on each workday
     trackEnd: '20:00',       // stop tracking if you left the office and did not come back
   },
-  salaries: [],              // {id, from:'YYYY-MM-DD', amount, status:'probation'|'official'}
+  salaries: [],              // {id, from:'YYYY-MM-DD', amount (gross monthly pay), otBase (contract base salary, the OT basis), status:'probation'|'official'}
   holidays: DEFAULT_HOLIDAYS.map(h => ({ ...h })),
 });
 
@@ -157,6 +157,10 @@ function computeDay(key, rec, settings, opts) {
   return r;
 }
 
+/* Overtime is paid on the base salary in the contract, not on gross pay.
+   Rates saved before this field existed have no otBase: they fall back to gross pay. */
+const otBaseOf = sal => sal ? (sal.otBase > 0 ? sal.otBase : sal.amount) : 0;
+
 function salaryOn(key, salaries) {
   const list = (salaries || []).filter(s => s.from && s.from <= key).sort((a, b) => a.from < b.from ? -1 : 1);
   return list.length ? list[list.length - 1] : null;
@@ -174,7 +178,7 @@ function stdDays(y, m, settings) {
 function computeMonth(y, m, days, settings, now) {
   const std = stdDays(y, m, settings);
   const rows = [];
-  const t = { workedMin: 0, cong: 0, paidCong: 0, ot150: 0, ot200: 0, ot300: 0, basePay: 0, otPay: 0, total: 0, tripDays: 0, missing: 0, noSalaryDays: 0 };
+  const t = { workedMin: 0, cong: 0, paidCong: 0, ot150: 0, ot200: 0, ot300: 0, basePay: 0, otPay: 0, total: 0, tripDays: 0, missing: 0, noSalaryDays: 0, noOtBaseDays: 0 };
   for (let d = 1; d <= daysInMonth(y, m); d++) {
     const key = y + '-' + pad(m) + '-' + pad(d);
     const rec = days[key];
@@ -182,11 +186,12 @@ function computeMonth(y, m, days, settings, now) {
     const sal = salaryOn(key, settings.salaries);
     r.salary = sal;
     r.daily = sal ? sal.amount / std : 0;
-    r.hourly = r.daily / 8;
+    r.hourly = sal ? otBaseOf(sal) / std / 8 : 0;   // OT hourly rate, from the contract base salary
     r.basePay = Math.round((r.cong + r.paidCong) * r.daily);
     r.otPay = Math.round((r.ot150 / 60 * 1.5 + r.ot200 / 60 * 2 + r.ot300 / 60 * 3) * r.hourly);
     r.total = r.basePay + r.otPay;
     if (!sal && (r.cong || r.paidCong || r.ot150 || r.ot200 || r.ot300)) t.noSalaryDays++;
+    if (sal && !(sal.otBase > 0) && (r.ot150 || r.ot200 || r.ot300)) t.noOtBaseDays++;
     t.workedMin += r.workedMin; t.cong += r.cong; t.paidCong += r.paidCong;
     t.ot150 += r.ot150; t.ot200 += r.ot200; t.ot300 += r.ot300;
     t.basePay += r.basePay; t.otPay += r.otPay;

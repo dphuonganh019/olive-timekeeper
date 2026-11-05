@@ -93,11 +93,12 @@
     <div class="card pay-total" id="payTotal"></div>
     <div class="card" id="payLines"></div>
     <div class="card">
-      <div class="spread"><h3 data-i18n="pay.rates">Your pay rates</h3><span class="small muted" data-i18n="pay.ratesHint">Probation and permanent pay apply from their start dates</span></div>
+      <div class="spread"><h3 data-i18n="pay.rates">Your pay rates</h3><span class="small muted" data-i18n="pay.ratesHint">Probation and permanent pay apply from their start dates. Day pay uses gross pay; overtime uses the contract base salary.</span></div>
       <ul class="sal-list" id="salList" style="margin-top:12px"></ul>
       <form id="salForm" class="fields" style="margin-top:14px;align-items:end">
         <label class="f"><span data-i18n="pay.f.from">Applies from</span><input type="date" id="salFrom" required></label>
-        <label class="f"><span data-i18n="pay.f.amount">Monthly pay (VND)</span><input type="text" inputmode="numeric" id="salAmount" placeholder="10,000,000" required></label>
+        <label class="f"><span data-i18n="pay.f.amount">Gross monthly pay (VND)</span><input type="text" inputmode="numeric" id="salAmount" placeholder="10,000,000" required></label>
+        <label class="f"><span data-i18n="pay.f.otBase">Contract base salary for OT (VND)</span><input type="text" inputmode="numeric" id="salOtBase" placeholder="6,000,000" required></label>
         <label class="f"><span data-i18n="pay.f.status">Status</span><select id="salStatus"><option value="probation" data-i18n="pay.status.probation">Probation</option><option value="official" data-i18n="pay.status.official">Permanent</option></select></label>
         <button class="btn primary" type="submit" data-i18n="pay.f.save">Save pay rate</button>
       </form>

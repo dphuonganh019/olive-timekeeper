@@ -91,7 +91,7 @@ Automatic check-in only works when location access is set to "Allow all the time
 - A-01: There is one fixed workplace.
 - A-02: The schedule is Monday–Friday full days and Saturday half days (08:00–12:00), with Saturday still counting as 1 full workday; Sunday is a day off.
 - A-03: Public holidays follow the 2019 Labour Code plus Vietnam Culture Day (24 November); 2026–2027 are preloaded and the user adds later years.
-- A-04: The pay entered is the gross monthly salary, before allowances and deductions.
+- A-04: Each pay rate has two amounts: the gross monthly salary (before allowances and deductions), which sets the day rate, and the base salary on the employment contract, which is the basis for overtime pay.
 - A-05: Lunch is fixed at 12:00–13:00 for every day type, including Sundays and public holidays.
 
 ## 3. Business rules
@@ -110,15 +110,15 @@ All calculations use check-in/out times rounded down to 15-minute blocks. Workda
 | BR-08 | 300% overtime: public holidays. All hours worked (lunch excluded), in 30-minute steps | 24 Nov 08:00–17:00 → 8 h × 300% |
 | BR-09 | A public holiday or compensatory day falling on Monday–Saturday earns 1 paid workday whether or not the user works | 24 Nov 2026 (Tuesday) → 1 holiday workday |
 | BR-10 | Monthly standard workdays = the number of Monday–Saturday days in the month; can be fixed at 24 or 26 instead | October 2026 → 27 |
-| BR-11 | Daily rate = monthly pay ÷ standard workdays. Hourly rate = daily rate ÷ 8 (Saturdays included) | 10,800,000 ÷ 27 = 400,000/day = 50,000/hour |
+| BR-11 | Daily rate = gross monthly pay ÷ standard workdays. OT hourly rate = contract base salary ÷ standard workdays ÷ 8 (Saturdays included). A rate saved before the base-salary field existed uses gross pay for OT and is flagged | Gross 10,800,000, base 5,400,000, 27 days → 400,000/day; OT 25,000/hour |
 | BR-12 | A pay rate applies from its start date; each day uses the rate with the latest start date on or before it | Probation from 1 Oct, permanent from 15 Oct → the two periods are calculated separately |
-| BR-13 | Estimated pay = (workdays + holiday workdays) × daily rate + OT hours × hourly rate × multiplier, summed day by day; before tax and insurance | See the example below the table |
+| BR-13 | Estimated pay = (workdays + holiday workdays) × daily rate + OT hours × OT hourly rate × multiplier, summed day by day; before tax and insurance | See the example below the table |
 | BR-14 | A past day without a check-out, or with a check-out not after the check-in, earns no workday and is flagged ⚠ | In 08:10, no out → 0 workdays |
 | BR-15 | Today without a check-out is counted up to the current time | — |
 | BR-16 | Leaving the office before the cutoff, not on a business trip, and not returning: the departure time becomes a provisional check-out | Morning shift 07:58–12:02 → 0.5 workday |
 | BR-17 | A provisional check-out becomes the check-out after 60 minutes away (configurable). Leaving from 30 minutes before lunch until lunch ends waits until 30 minutes after lunch instead. A day that ended with a provisional check-out is settled the next time the app opens | Left 10:00 → final at 11:00 · left 12:08 → final at 13:30 |
 
-Example for BR-13: probation pay of 10,800,000 VND, October 2026, 6 October in at 08:00 and out at 17:43 → 1 workday (400,000 VND) + 0.5 h OT × 50,000 × 1.5 (37,500 VND) = 437,500 VND.
+Example for BR-13: gross pay of 10,800,000 VND and a contract base salary of 5,400,000 VND, October 2026, 6 October in at 08:00 and out at 17:43 → 1 workday (400,000 VND) + 0.5 h OT × 25,000 × 1.5 (18,750 VND) = 418,750 VND.
 
 ## 4. Epic 1 – Manual check-in and editing
 
@@ -351,10 +351,10 @@ As an employee, I want to see each working day of the month in detail so that I 
 
 As an employee, I want to enter my probation and permanent pay with their start dates so that the month I become permanent is calculated correctly.
 
-- AC-16.1: The form has Applies from, Monthly pay (VND) and Status (Probation / Permanent). Missing date or amount → not saved, "Enter the start date and the amount".
-- AC-16.2: The amount field accepts digits only and adds thousands separators while typing (10,000,000 in English, 10.000.000 in Vietnamese).
+- AC-16.1: The form has Applies from, Gross monthly pay (VND), Contract base salary for OT (VND) and Status (Probation / Permanent). Missing date or either amount → not saved, "Enter the start date, gross pay and contract base salary".
+- AC-16.2: Both amount fields accept digits only and adds thousands separators while typing (10,000,000 in English, 10.000.000 in Vietnamese).
 - AC-16.3: Saving a rate with the same start date as an existing one → replaces it.
-- AC-16.4: Rates are listed newest first, each with amount, status label, start date and a delete button.
+- AC-16.4: Rates are listed newest first, each with gross amount, status label, the contract base salary used for OT (or "No contract base salary yet; OT uses gross pay"), start date and a delete button. Tapping a rate loads it into the form to edit; saving with the same start date replaces it.
 - AC-16.5: Adding, changing or deleting a rate → the timesheet and Pay tab recalculate immediately, including past months.
 
 ### US-17 – View the monthly pay estimate
@@ -362,10 +362,11 @@ As an employee, I want to enter my probation and permanent pay with their start 
 As an employee, I want to know roughly what this month's pay will be, broken down by component.
 
 - AC-17.1: The estimated total is shown large, marked "before tax and insurance".
-- AC-17.2: Below the total: the status and pay rate applied (or "Pay rate changed this month (calculated per day)"), the standard workdays and the hourly-rate formula.
-- AC-17.3: A five-line breakdown plus total: Pay for days worked (workdays × daily rate) · Paid holidays / compensatory days (days) · OT 150% · Sunday / comp. day 200% · Public holiday 300% (each OT line shows the hours and "hourly rate × multiplier / hour").
+- AC-17.2: Below the total: the status and pay rate applied (or "Pay rate changed this month (calculated per day)"), the standard workdays and the formulas (day rate from gross pay, OT hourly rate from the contract base salary).
+- AC-17.3: A five-line breakdown plus total: Pay for days worked (workdays × daily rate) · Paid holidays / compensatory days (days) · OT 150% · Sunday / comp. day 200% · Public holiday 300% (each OT line shows the hours and "OT hourly rate × multiplier / hour").
 - AC-17.4: Workdays without an applicable pay rate → a warning with their number, suggesting a rate with an earlier start date; those days count as 0.
 - AC-17.5: Amounts are rounded to the dong and formatted for the chosen language (1,219,906 ₫ / 1.219.906 ₫).
+- AC-17.6: Days with overtime whose pay rate has no contract base salary → a warning with their number, asking the user to tap the rate and add the base salary.
 
 ## 8. Epic 5 – Excel and PDF export
 
@@ -376,7 +377,7 @@ From the Pay tab, the user can export the timesheet and pay estimate of the mont
 As an employee, I want to export my timesheet to Excel to filter it, compare it and send it to HR.
 
 - AC-18.1: File name `timesheet-YYYY-MM[-full-name-without-accents].xlsx` in English or `bang-luong-YYYY-MM[…].xlsx` in Vietnamese, e.g. `timesheet-2026-10-Nguyen-Van-A.xlsx`; one sheet named "Timesheet MM-YYYY" / "Bang cong MM-YYYY".
-- AC-18.2: Header: the title "TIMESHEET & PAY ESTIMATE · OCTOBER 2026"; Employee, Status, Monthly pay, Standard workdays, Hourly rate, Exported at.
+- AC-18.2: Header: the title "TIMESHEET & PAY ESTIMATE · OCTOBER 2026"; Employee, Status, Gross monthly pay, Contract base salary (OT), Standard workdays, OT hourly rate, Exported at.
 - AC-18.3: One row per day with 21 columns: Date · Day · Day type · Check-in · In (rounded) · In source · Check-out · Out (rounded) · Out source · Lunch (min) · Worked (h) · Workdays · Holiday / comp. workdays · OT 150% · OT 200% · OT 300% (h) · Business trip · Day pay · OT pay · Day total · Note.
 - AC-18.4: The time source reads "Manual" or "GPS"; a missing check-out reads "MISSING"; today without a check-out reads "working".
 - AC-18.5: A TOTAL row follows the days, then a PAY SUMMARY with the five components and the ESTIMATED TOTAL, matching the Pay tab.
