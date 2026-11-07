@@ -89,7 +89,7 @@ Automatic check-in only works when location access is set to "Allow all the time
 **Assumptions**
 
 - A-01: There is one fixed workplace.
-- A-02: The schedule is Monday–Friday full days and Saturday half days (08:00–12:00), with Saturday still counting as 1 full workday; Sunday is a day off.
+- A-02: The workdays of the week, lunch break and pay rules come from the company pay policy (US-28). Preset 1 (the default, and the rules of earlier versions): Monday–Friday full days and Saturday half days (08:00–12:00) counting as 1 full workday, Sunday off. Preset 2: Monday–Friday, Saturday and Sunday off.
 - A-03: Public holidays follow the 2019 Labour Code plus Vietnam Culture Day (24 November); 2026–2027 are preloaded and the user adds later years.
 - A-04: The contract is entered once in Settings: a probation period and a permanent period, each with dates, the base salary on the contract (basis for insurance, overtime and paid leave) and the gross monthly pay (total pay, basis for the day rate). All gross pay except overtime is taxable income.
 - A-06: Tax and insurance follow the rules in force from the 2026 tax year: Law 109/2025/QH15 on personal income tax, Decree 253/2026/NĐ-CP, the Social Insurance Law 2024, Decree 161/2026/NĐ-CP (statutory base pay) and Decree 293/2025/NĐ-CP (regional minimum wage).
@@ -120,7 +120,15 @@ All calculations use check-in/out times rounded down to 15-minute blocks. Workda
 | BR-21 | Personal income tax (progressive): taxable income = gross income − overtime pay (exempt) − insurance − family deduction (15,500,000 + 6,200,000 per dependant); brackets up to 10 M 5%, 10–30 M 10%, 30–60 M 20%, 60–100 M 30%, over 100 M 35% | Taxable 16,200,000 → 500,000 + 620,000 = 1,120,000 |
 | BR-22 | Probation tax, chosen in Settings: (a) contract under 3 months: 10% of the probation income (overtime excluded) when it reaches 5,000,000 per payment (2,000,000 before July 2026); (b) probation inside a contract of 3+ months: progressive with the permanent income; (c) no-withholding commitment signed: none | 11,777,778 → 1,177,778 withheld |
 | BR-23 | Take-home pay = gross income − insurance − personal income tax; an estimate, settled in the annual tax return | — |
-| BR-24 | Annual leave used = paid leave days marked in the calendar year (½ for half days); left = annual leave days per year (default 12) − used | 2.5 used of 12 → 9.5 left |
+| BR-24 | Annual leave used = paid leave days marked in the calendar year (hours ÷ 8 for hourly leave); left = annual leave days per year (default 12) − used | 2.5 used of 12 → 9.5 left |
+| BR-25 | Weekdays outside the policy's workdays are weekly rest days: work on them is OT 200%, leave is ignored, holidays on them earn no paid workday; standard workdays (automatic) = the policy's workdays in the month | Mon–Fri policy, November 2026 → 21; Saturday 09:00–12:00 → 3 h at 200% |
+| BR-26 | The policy chooses the basis of day pay (gross pay or base/title salary), overtime (base or gross) and paid leave (base or gross) | Preset 2: all on the title salary |
+| BR-27 | Pay items are added to day pay: per workday × amount; per day worked through the whole lunch break × amount (check-in ≤ lunch start and check-out ≥ lunch end); monthly amount × workdays ÷ standard; fixed monthly amount; performance = base salary × the month's rating % × workdays ÷ standard. WFH days count as workdays; paid leave and holidays do not | 20,000 × 19 workdays = 380,000 |
+| BR-28 | Each item is taxable, tax-free, or a cash meal allowance tax-free up to the legal cap (730,000 a month; 1,200,000 from 1 July 2026, Decree 253/2026 Art. 8), the excess being taxable | Lunch 840,000 → all tax-free |
+| BR-29 | With overtime approval on, only the approved hours entered for a day are paid, at that day's multiplier; hours worked beyond the standard that are not approved are shown as pending | Worked 2.5 h extra, 2 h approved → 2 h × 150%, 0.5 h pending |
+| BR-30 | WFH limit = floor(limit % × standard workdays); more WFH days in the month → a warning | 30% × 21 = 6 days |
+| BR-31 | Days for the 13th-month salary = workdays + paid holidays + paid leave under a contract, summed over the calendar year | — |
+| BR-32 | Leave can be entered by half day (preset 1) or by whole hours (preset 2, 1–7 h or the whole day) | 2 h leave + 10:30–17:30 worked → 0.25 leave + 0.75 workday |
 | BR-14 | A past day without a check-out, or with a check-out not after the check-in, earns no workday and is flagged ⚠ | In 08:10, no out → 0 workdays |
 | BR-15 | Today without a check-out is counted up to the current time | — |
 | BR-16 | Leaving the office before the cutoff, not on a business trip, and not returning: the departure time becomes a provisional check-out | Morning shift 07:58–12:02 → 0.5 workday |
@@ -156,7 +164,7 @@ As an employee, I want to tap Check out when I leave so that my real check-out t
 As an employee, I want to correct my own check-in/out times when GPS is wrong or I forgot to tap.
 
 - AC-03.1: The edit sheet opens from "Edit times" (today), from a row in the Timesheet, or from "+ Add / edit day" (today if the current month is shown, otherwise the 1st).
-- AC-03.2: The sheet has Date, Check-in, Check-out, "I went on a business trip this day", leave ("Paid annual leave" and "Unpaid leave" checkboxes, only one at a time, with Whole day / Morning / Afternoon; hidden on Sundays and holidays, no half day on Saturdays) and Note; it shows the weekday, the day type (weekday, Saturday, Sunday, public holiday, compensatory day) and any GPS times recorded.
+- AC-03.2: The sheet has Date, Check-in, Check-out, "I went on a business trip this day", "Worked from home (WFH)" (when the policy allows WFH, on workdays), "Approved overtime (hours)" with the recorded extra hours (when OT needs approval), leave ("Paid annual leave" and "Unpaid leave" checkboxes, only one at a time, with Whole day / Morning / Afternoon; hidden on Sundays and holidays, no half day on Saturdays) and Note; it shows the weekday, the day type (weekday, Saturday, Sunday, public holiday, compensatory day) and any GPS times recorded.
 - AC-03.3: Check-out not after check-in → not saved, "Check-out must be after check-in". A check-out without a check-in → "Enter the check-in time first".
 - AC-03.4: An entered time equal to the GPS time → stays a GPS time. A different time → stored as a manual time. An empty field → clears that time, including the GPS time.
 - AC-03.5: "Use GPS times" appears only when the day has GPS times; tapping it removes the manual times.
@@ -491,6 +499,21 @@ As a user, I want to use the app in English or Vietnamese.
 - AC-27.5: The Android notifications, notification channel names, widget and toasts follow the app's language.
 - AC-27.6: Calculations do not depend on the language: the same data gives the same workdays, overtime and pay in both languages.
 
+### US-28 – Company pay policy
+
+As an employee, I want to describe how my own company counts workdays and pays allowances so that the app fits my company without changing anyone else's calculation.
+
+- AC-28.1: Settings → Company pay policy offers a Preset (Mon–Sat, day pay on gross salary · Mon–Fri, title salary + performance + daily allowances · Custom) and "Apply preset", which needs a second tap ("Tap again: replaces the rules and allowances"). Applying sets the workdays, lunch break, standard workdays and every rule below; salaries stay as entered.
+- AC-28.2: Workdays of the week are ticked Mon–Sun (at least one). Selects: Day pay based on, Overtime based on, Paid leave based on (gross / base or title salary), Smallest unit of leave (half a day / 1 hour). Ticks: Overtime paid only when approved, Work from home allowed (with a limit in % of standard workdays), Count days for the 13th-month salary. Any change saves immediately, recalculates every month and switches the preset to Custom.
+- AC-28.3: Allowances and performance pay are listed with name, amount, calculation, tax treatment and period; tapping one loads it into the form (Name, Calculated, Amount, Applies during, Personal income tax) and "Save changes" replaces it; ✕ deletes it. Name and amount are required (no amount for performance).
+- AC-28.4: With a performance item, the ratings are listed (name, %, default); the Pay tab shows "Performance rating for <month>", saved on that month. Preset 2 ratings: Awesome 34.83%, Excellent 34.33%, Strong 33.83%, Solid 33.33% (default), Inconsistent 32.83%, Under Performing 32.33%, Serious Violation 0%, where 33.33% is exactly one third (19,658,063 × ⅓ = 6,552,688).
+- AC-28.5: When day pay is on the base salary, the contract form hides the gross fields and asks for the title salary on the (probation) contract.
+- AC-28.6: "Export policy file" saves the workdays, lunch break, rounding, standard workdays and the policy (no salary or timesheet); "Import policy file" applies such a file, or shows "This is not an Olive Timekeeper policy file".
+- AC-28.7: With WFH allowed, the Today card shows "Working from home today" on workdays; WFH days get a WFH pill in the timesheet, a WFH tile, a count on the Pay tab and "WFH" in the exported notes.
+- AC-28.8: Data saved before policies existed opens with preset 1 and gives exactly the same results.
+
+Example for preset 2 (permanent, August 2026, 21 standard workdays, every weekday 08:30–17:30): title salary 19,658,063 + performance 6,552,688 + living 420,000 + lunch 840,000 + grooming 300,000 = 27,770,751; probation: 16,709,354 + 5,569,785 + 420,000 + 840,000 + insurance paid in cash 4,226,484 = 27,765,623.
+
 ## 10. Non-functional requirements
 
 Automatically recorded times must be within about 1–2 minutes of reality; the app must work offline and must not send location data off the phone.
@@ -565,5 +588,9 @@ Automatic check-in has not yet been tested on a real phone, and some business ru
 | Q-09 | Public holidays from 2028 on | Entered by the user when announced |
 | Q-10 | Should the web and Android versions share data? | No; use a backup file |
 | Q-11 | Should the probation 10% include overtime pay? | No; overtime is tax-exempt income |
-| Q-12 | Are allowances (e.g. meals, up to 1,200,000/month tax-free) part of the gross pay? | Not modelled; all gross pay except overtime is taxable |
+| Q-12 | Are allowances part of the gross pay? | Preset 1: yes, all gross pay except overtime is taxable; other policies list them as pay items (BR-27, BR-28) |
 | Q-13 | Union fee (1% of the insurance salary) | Not deducted |
+| Q-14 | Preset 2: are performance pay and allowances paid on public holidays? | No; holidays are paid at the title-salary day rate only |
+| Q-15 | Preset 2: is the grooming allowance and the probation insurance payment prorated by workdays? | Yes, monthly amount × workdays ÷ standard |
+| Q-16 | Preset 2: standard workdays = the Mon–Fri days of each month, or always 21? | Mon–Fri days of the month (21 can be fixed in Settings) |
+| Q-17 | How is the 13th-month salary amount calculated? | Only the days are counted |

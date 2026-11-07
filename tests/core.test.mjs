@@ -8,8 +8,8 @@ const ctx = {};
 vm.createContext(ctx);
 const src = f => readFileSync(new URL('../src/' + f, import.meta.url), 'utf8');
 vm.runInContext(src('core.js') + '\n' + src('i18n.js') +
-  ';this.X={computeDay,computeMonth,contractOf,progressiveTax,leaveUsed,gpsStep,geofenceReplay,DEFAULT_SETTINGS,settleLeave,leaveFinalMin,migrateHolidays,dayType,I18N,T,setLang,eventText,signalText,holidayName,dayLabel};', ctx);
-const { computeDay, computeMonth, contractOf, progressiveTax, leaveUsed, geofenceReplay, DEFAULT_SETTINGS, settleLeave, leaveFinalMin } = ctx.X;
+  ';this.X={computeDay,computeMonth,contractOf,progressiveTax,leaveUsed,POLICY_PRESETS,stdDays,gpsStep,geofenceReplay,DEFAULT_SETTINGS,settleLeave,leaveFinalMin,migrateHolidays,dayType,I18N,T,setLang,eventText,signalText,holidayName,dayLabel};', ctx);
+const { computeDay, computeMonth, contractOf, progressiveTax, leaveUsed, POLICY_PRESETS, stdDays, geofenceReplay, DEFAULT_SETTINGS, settleLeave, leaveFinalMin } = ctx.X;
 const S = DEFAULT_SETTINGS();
 const day = (i, o, key = '2026-10-06') => computeDay(key, { manualIn: i, manualOut: o }, S);
 const at = (d, h, m) => new Date(2026, 9, d, h, m).getTime();
@@ -183,6 +183,136 @@ test('annual leave used in a year counts half days and Saturdays', () => {
     10: { '2026-10-10': { leave: { type: 'paid', part: 'am' } }, '2026-10-07': { leave: { type: 'unpaid' } } } };
   const u = leaveUsed(2026, m => days[m], s);
   assert.equal(u.used, 2.5); assert.equal(u.quota, 12); assert.equal(u.left, 9.5);
+});
+
+/* ===== Preset 2: Mon–Fri, title salary + performance + allowances per day ===== */
+const office = (contract, extra = {}) => {
+  const d = DEFAULT_SETTINGS();
+  return {
+    ...d, ...extra,
+    work: { ...d.work, ...POLICY_PRESETS.office.work },
+    policy: POLICY_PRESETS.office.policy(),
+    contract: { ...d.contract, ...contract, probation: { ...d.contract.probation, ...(contract.probation || {}) }, official: { ...d.contract.official, ...(contract.official || {}) } },
+  };
+};
+const OFF = { official: { from: '2026-01-01', base: 19658063 } };
+const PRO = { probation: { from: '2026-01-01', to: '2026-12-31', base: 16709354 } };
+const weekdays = (y, m, from = '08:30', to = '17:30') => {
+  const out = {};
+  for (let d = 1; d <= new Date(y, m, 0).getDate(); d++) {
+    const w = new Date(y, m - 1, d).getDay();
+    if (w > 0 && w < 6) out[y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0')] = { manualIn: from, manualOut: to };
+  }
+  return out;
+};
+const item = (M, id) => M.totals.items.find(i => i.id === id).amount;
+
+test('preset 2: standard workdays are the Mon–Fri days of the month', () => {
+  assert.equal(stdDays(2026, 8, office(OFF)), 21);
+  assert.equal(stdDays(2026, 10, office(OFF)), 22);
+});
+
+test('preset 2: a full permanent month reproduces the offer letter (27,770,750)', () => {
+  const M = computeMonth(2026, 8, weekdays(2026, 8), office(OFF));
+  assert.equal(M.totals.workPay, 19658063);
+  assert.equal(item(M, 'perf'), 6552688);                    // 19,658,063 × 33.33…% (Solid)
+  assert.equal(item(M, 'living'), 420000);                   // 20,000 × 21
+  assert.equal(item(M, 'lunch'), 840000);                    // 40,000 × 21
+  assert.equal(item(M, 'beauty'), 300000);
+  assert.equal(M.totals.items.find(i => i.id === 'insPay').amount, 0); // probation only
+  assert.equal(M.totals.total, 27770751);                    // the letter rounds the total down by 1 dong
+  const D = M.deductions;
+  assert.equal(D.insurance.total, Math.round(19658063 * 0.08) + Math.round(19658063 * 0.015) + Math.round(19658063 * 0.01));
+  assert.equal(D.mealExempt, 840000);                        // under the 1,200,000 cap
+  assert.equal(D.officialIncome, 27770751 - 840000);         // lunch tax-free, everything else taxable
+  assert.equal(D.pit, progressiveTax(27770751 - 840000 - D.insurance.total - 15500000));
+});
+
+test('preset 2: a full probation month reproduces the offer letter (27,765,623), no insurance', () => {
+  const M = computeMonth(2026, 8, weekdays(2026, 8), office(PRO));
+  assert.equal(M.totals.workPay, 16709354);
+  assert.equal(item(M, 'perf'), 5569785);
+  assert.equal(item(M, 'insPay'), 4226484);
+  assert.equal(item(M, 'beauty'), 0);
+  assert.equal(M.totals.total, 27765623);
+  assert.equal(M.deductions.insurance.due, false);
+  assert.equal(M.deductions.pitFlat, Math.round((27765623 - 840000) * 0.1)); // 10%, lunch excluded
+});
+
+test('preset 2: performance rating chosen for the month', () => {
+  const M = computeMonth(2026, 8, weekdays(2026, 8), office(OFF), null, { rating: 'awesome' });
+  assert.equal(item(M, 'perf'), Math.round(19658063 * (100 / 3 + 1.5) / 100));
+  assert.equal(item(computeMonth(2026, 8, weekdays(2026, 8), office(OFF), null, { rating: 'violation' }), 'perf'), 0);
+});
+
+test('preset 2: allowances and performance follow the days worked; WFH counts as worked', () => {
+  const days = weekdays(2026, 8);
+  delete days['2026-08-03']; delete days['2026-08-04'];             // 2 days not worked → 19 workdays
+  days['2026-08-05'].wfh = true;
+  const M = computeMonth(2026, 8, days, office(OFF));
+  assert.equal(M.totals.cong, 19);
+  assert.equal(M.totals.wfhDays, 1);
+  assert.equal(item(M, 'living'), 380000);
+  assert.equal(item(M, 'lunch'), 760000);
+  assert.equal(item(M, 'perf'), Math.round(19658063 / 3 * 19 / 21));
+  assert.equal(item(M, 'beauty'), Math.round(300000 * 19 / 21));
+  assert.equal(M.totals.wfhCap, 6);                                // 30% of 21
+});
+
+test('preset 2: lunch allowance only for days worked across the whole 11:45–12:45 break', () => {
+  const s = office(OFF);
+  assert.equal(computeDay('2026-08-03', { manualIn: '08:30', manualOut: '11:45' }, s).spansLunch, false);
+  assert.equal(computeDay('2026-08-03', { manualIn: '12:45', manualOut: '17:30' }, s).spansLunch, false);
+  assert.equal(computeDay('2026-08-03', { manualIn: '11:45', manualOut: '12:45' }, s).spansLunch, true);
+  const M = computeMonth(2026, 8, { '2026-08-03': { manualIn: '12:45', manualOut: '17:30' } }, s);
+  assert.equal(item(M, 'lunch'), 0);
+  assert.ok(item(M, 'living') > 0);
+});
+
+test('preset 2: paid leave in hours, paid on the title salary only', () => {
+  const s = office(OFF);
+  const M = computeMonth(2026, 8, {
+    '2026-08-03': { leave: { type: 'paid', hours: 8 } },
+    '2026-08-04': { manualIn: '10:30', manualOut: '17:30', leave: { type: 'paid', hours: 2 } },
+  }, s);
+  assert.equal(M.totals.paidLeave, 1.25);
+  assert.equal(M.totals.leavePay, Math.round(19658063 / 21 * 1.25));
+  assert.equal(M.totals.cong, 0.75);                                // 10:30–17:30 = 6 h worked
+  assert.equal(item(M, 'lunch'), 40000);                            // worked across lunch on the 4th
+  assert.equal(M.totals.t13Cong, 2);                                // leave counts for the 13th-month salary
+  assert.equal(computeMonth(2026, 9, {}, office({ official: { from: '2026-10-01', base: 19658063 } })).totals.t13Cong, 0); // holidays before the contract
+  const u = leaveUsed(2026, m => m === 8 ? { '2026-08-03': { leave: { type: 'paid', hours: 3 } } } : {}, s);
+  assert.equal(u.used, 0.375);
+});
+
+test('preset 2: overtime is paid only for approved hours; Saturday is a rest day at 200%', () => {
+  const s = office(OFF);
+  const r = computeDay('2026-08-03', { manualIn: '08:30', manualOut: '20:30' }, s);
+  assert.equal(r.ot150, 0); assert.equal(r.otPending, 180);
+  const a = computeDay('2026-08-03', { manualIn: '08:30', manualOut: '20:30', otApproved: 2 }, s);
+  assert.equal(a.ot150, 120); assert.equal(a.otPending, 60);
+  const sat = computeDay('2026-08-08', { manualIn: '09:00', manualOut: '12:00', otApproved: 3 }, s);
+  assert.equal(sat.dt.type, 'rest'); assert.equal(sat.cong, 0); assert.equal(sat.ot200, 180);
+  const M = computeMonth(2026, 8, { '2026-08-08': { manualIn: '09:00', manualOut: '12:00', otApproved: 3 } }, s);
+  assert.equal(M.totals.ot200Pay, Math.round(3 * 2 * 19658063 / 21 / 8));
+  assert.equal(computeDay('2026-08-08', { leave: { type: 'paid', hours: 8 } }, s).paidLeave, 0);
+});
+
+test('preset 2: a holiday on a weekday is paid at the day rate; no insurance month needs Mon–Fri days only', () => {
+  const s = office({ official: { from: '2026-11-16', base: 19658063 } });
+  const M = computeMonth(2026, 11, {}, s);
+  assert.equal(M.rows[23].paidCong, 1);                             // 24 Nov, Tuesday
+  assert.equal(M.deductions.insurance.due, true);                   // 2–13 Nov: 10 Mon–Fri days before → still due
+  const late = office({ official: { from: '2026-11-23', base: 19658063 } });  // 2–20 Nov: 15 days before
+  assert.equal(computeMonth(2026, 11, {}, late).deductions.insurance.reason, 'under14');
+});
+
+test('preset 1 keeps its rules when nothing is configured', () => {
+  const d = DEFAULT_SETTINGS();
+  assert.equal(JSON.stringify(d.work.workDays), '[1,2,3,4,5,6]');
+  assert.equal(d.policy.dayPay, 'gross'); assert.equal(d.policy.otApproval, false);
+  const old = { ...d }; delete old.policy; old.work = { ...d.work }; delete old.work.workDays;
+  assert.equal(computeDay('2026-10-10', { manualIn: '08:00', manualOut: '12:00' }, old).cong, 1); // Saturday 4 h = 1
 });
 
 function replay(events, manualIn) {
@@ -459,7 +589,10 @@ test('every key used by the app, the markup and the logic exists', () => {
   for (const m of app.matchAll(/logEvent\([^)]*?, '([\w.]+)'/g)) used.add('ev.' + m[1]);
   for (const m of core.matchAll(/code: '([\w.]+)'/g)) used.add('ev.' + m[1]);
   for (const m of core.matchAll(/key: '(\w+)'/g)) used.add('hol.' + m[1]);
-  for (const t of ['weekday', 'saturday', 'sunday', 'holiday', 'comp']) used.add('day.' + t);
+  for (const t of ['weekday', 'saturday', 'sunday', 'rest', 'holiday', 'comp']) used.add('day.' + t);
+  for (const t of ['perf', 'living', 'lunch', 'beauty', 'insPay']) used.add('item.tpl.' + t);
+  for (const t of ['perDay', 'lunchDay', 'byDays', 'fixed', 'performance']) used.add('item.kind.' + t);
+  for (const t of ['taxable', 'exempt', 'meal']) used.add('item.tax.' + t);
   for (const t of ['waiting', 'arriving', 'inside', 'outside']) used.add('gps.mode.' + t);
   for (const t of ['enter', 'dwell', 'exit']) used.add('sig.' + t);
   for (const c of ['date', 'dow', 'type', 'in', 'inR', 'inSrc', 'out', 'outR', 'outSrc', 'lunch', 'worked', 'cong', 'paid', 'ot150', 'ot200', 'ot300', 'trip', 'dayPay', 'otPay', 'dayTotal', 'note']) used.add('x.col.' + c);

@@ -59,11 +59,57 @@ function migrateHolidays(list) {
   });
 }
 
+/* Company pay policies. 'gross' = the original rules (Mon–Sat, day pay on gross pay); 'office' = Mon–Fri with
+   a title salary, a monthly performance rate and allowances paid per day worked. Applying a preset sets the work
+   days, lunch break and policy; salaries stay as entered.
+   Pay item kinds: 'perDay' = amount × workdays; 'lunchDay' = amount per day worked across the whole lunch break;
+   'byDays' = monthly amount × workdays ÷ standard workdays; 'fixed' = monthly amount for the days covered;
+   'performance' = base salary × the month's rating % × workdays ÷ standard workdays.
+   tax: 'taxable' | 'exempt' | 'meal' (cash meal allowance: tax-free up to the legal monthly cap). */
+const THIRD = 100 / 3;
+const POLICY_PRESETS = {
+  gross: {
+    work: { workDays: [1, 2, 3, 4, 5, 6], satStdHours: 4, lunchStart: '12:00', lunchEnd: '13:00', stdDaysMode: 'auto' },
+    policy: () => ({
+      preset: 'gross', dayPay: 'gross', otBasis: 'base', leavePay: 'base', otApproval: false, leaveUnitHours: 4,
+      wfh: false, wfhCapPct: 0, t13: false, items: [], ratings: [], defaultRating: '',
+    }),
+  },
+  office: {
+    work: { workDays: [1, 2, 3, 4, 5], lunchStart: '11:45', lunchEnd: '12:45', stdDaysMode: 'auto' },
+    policy: () => ({
+      preset: 'office', dayPay: 'base', otBasis: 'base', leavePay: 'base', otApproval: true, leaveUnitHours: 1,
+      wfh: true, wfhCapPct: 30, t13: true,
+      items: [
+        { id: 'perf', tpl: 'perf', name: '', kind: 'performance', amount: 0, when: 'both', tax: 'taxable' },
+        { id: 'living', tpl: 'living', name: '', kind: 'perDay', amount: 20000, when: 'both', tax: 'taxable' },
+        { id: 'lunch', tpl: 'lunch', name: '', kind: 'lunchDay', amount: 40000, when: 'both', tax: 'meal' },
+        { id: 'beauty', tpl: 'beauty', name: '', kind: 'byDays', amount: 300000, when: 'official', tax: 'taxable' },
+        { id: 'insPay', tpl: 'insPay', name: '', kind: 'byDays', amount: 4226484, when: 'probation', tax: 'taxable' },
+      ],
+      ratings: [
+        { id: 'awesome', name: 'Awesome Performance', pct: THIRD + 1.5 },
+        { id: 'excellent', name: 'Excellent Performance', pct: THIRD + 1 },
+        { id: 'strong', name: 'Strong Performance', pct: THIRD + 0.5 },
+        { id: 'solid', name: 'Solid Performance', pct: THIRD },
+        { id: 'inconsistent', name: 'Inconsistent Performance', pct: THIRD - 0.5 },
+        { id: 'under', name: 'Under Performing', pct: THIRD - 1 },
+        { id: 'violation', name: 'Serious Violation', pct: 0 },
+      ],
+      defaultRating: 'solid',
+    }),
+  },
+};
+const policyOf = settings => ({ ...POLICY_PRESETS.gross.policy(), ...(settings.policy || {}) });
+const workDaysOf = settings => (settings.work && Array.isArray(settings.work.workDays) && settings.work.workDays.length)
+  ? settings.work.workDays : [1, 2, 3, 4, 5, 6];
+
 const DEFAULT_SETTINGS = () => ({
   name: '',
   lang: null,                // 'en' | 'vi'; null = follow the device language
   office: { name: '', lat: null, lng: null, radius: 150 },
   work: {
+    workDays: [1, 2, 3, 4, 5, 6], // weekdays worked (0 = Sunday … 6 = Saturday); other days are weekly rest days
     lunchStart: '12:00', lunchEnd: '13:00',
     satStdHours: 4,          // Saturday 8:00–12:00 = 1 workday
     afternoonCutoff: '15:00',// leaving the office after this time = check-out
@@ -91,34 +137,60 @@ const DEFAULT_SETTINGS = () => ({
                                // 'progressive' = probation inside a contract of 3+ months; 'commit' = signed the no-withholding commitment
     leaveDaysPerYear: 12,
   },
+  policy: POLICY_PRESETS.gross.policy(),
   salaries: [],              // legacy pay rates (before Settings held the contract): migrated by contractOf()
   holidays: DEFAULT_HOLIDAYS.map(h => ({ ...h })),
 });
 
-/* Day type: 'holiday' | 'comp' | 'sunday' | 'saturday' | 'weekday'; `holiday` is the matching holiday entry. */
-function dayType(key, holidays) {
+/* Day type: 'holiday' | 'comp' | 'sunday' | 'rest' (another weekly rest day, e.g. Saturday at a Mon–Fri company)
+   | 'saturday' (a Saturday that is worked) | 'weekday'; `holiday` is the matching holiday entry; `work` = a workday of the week.
+   The third argument is either the settings or a list of workdays. */
+function dayType(key, holidays, wd) {
   const dow = parseKey(key).getDay();
+  const days = Array.isArray(wd) ? wd : wd ? workDaysOf(wd) : [1, 2, 3, 4, 5, 6];
+  const work = days.includes(dow);
   const h = (holidays || []).find(x => x.date === key);
-  if (h && h.kind === 'holiday') return { type: 'holiday', holiday: h, dow };
-  if (h && h.kind === 'comp') return { type: 'comp', holiday: h, dow };
-  if (dow === 0) return { type: 'sunday', dow };
-  if (dow === 6) return { type: 'saturday', dow };
-  return { type: 'weekday', dow };
+  if (h && h.kind === 'holiday') return { type: 'holiday', holiday: h, dow, work };
+  if (h && h.kind === 'comp') return { type: 'comp', holiday: h, dow, work };
+  if (dow === 0) return { type: 'sunday', dow, work: false };
+  if (!work) return { type: 'rest', dow, work };
+  if (dow === 6) return { type: 'saturday', dow, work };
+  return { type: 'weekday', dow, work };
 }
+const dayTypeOf = (key, settings) => dayType(key, settings.holidays, settings);
 
 const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
 
+/* Leave hours of a record: {hours} (hourly leave) or {part:'full'|'am'|'pm'} (half days). */
+const leaveHours = lv => lv.hours > 0 ? Math.min(8, +lv.hours) : (lv.part === 'am' || lv.part === 'pm' ? 4 : 8);
+
 /* Computes one day. opts.nowMin: for today without a check-out, count up to the current time.
-   rec.leave = {type:'paid'|'unpaid', part:'full'|'am'|'pm'} marks annual (paid) leave or unpaid leave. */
+   rec.leave = {type:'paid'|'unpaid', part:'full'|'am'|'pm'} or {type, hours} marks annual (paid) leave or unpaid leave.
+   rec.wfh = worked from home (counts as a normal workday). rec.otApproved = approved overtime hours, used instead of
+   the recorded overtime when the policy requires approval. */
 function computeDay(key, rec, settings, opts) {
   const r = computeWorkDay(key, rec, settings, opts);
+  const P = policyOf(settings);
+  r.wfh = !!(rec && rec.wfh && P.wfh);
+  // Overtime that needs approval: pay the approved hours at the day's rate; recorded overtime is kept for reference
+  r.otRecorded = r.ot150 + r.ot200 + r.ot300; r.otPending = 0; r.otApproved = null;
+  if (P.otApproval) {
+    const ap = Math.max(0, Math.round((+(rec && rec.otApproved) || 0) * 60));
+    r.otApproved = ap;
+    r.ot150 = r.ot200 = r.ot300 = 0;
+    if (r.dt.type === 'holiday') r.ot300 = ap;
+    else if (r.dt.type === 'weekday' || r.dt.type === 'saturday') r.ot150 = ap;
+    else r.ot200 = ap;
+    r.otPending = Math.max(0, r.otRecorded - ap);
+  }
   r.leave = null; r.paidLeave = 0; r.unpaidLeave = 0;
   const lv = rec && rec.leave;
   if (!lv || (lv.type !== 'paid' && lv.type !== 'unpaid')) return r;
-  if (r.dt.type !== 'weekday' && r.dt.type !== 'saturday') return r; // Sundays and holidays are already days off
-  const part = r.dt.type === 'saturday' ? 'full' : (lv.part === 'am' || lv.part === 'pm' ? lv.part : 'full');
-  const amt = part === 'full' ? 1 : 0.5;
-  r.leave = { type: lv.type, part, days: amt };
+  if (r.dt.type !== 'weekday' && r.dt.type !== 'saturday') return r; // rest days and holidays are already days off
+  const hours = r.dt.type === 'saturday' ? 8 : leaveHours(lv);   // a short Saturday counts as one whole day
+  const amt = hours / 8;
+  const part = hours >= 8 ? 'full' : lv.hours > 0 ? 'hours' : lv.part;
+  r.leave = { type: lv.type, part, hours, days: amt };
   r.cong = Math.max(0, Math.min(r.cong, 1 - amt));        // leave + work never exceed 1 workday
   if (lv.type === 'paid') r.paidLeave = amt; else r.unpaidLeave = amt;
   return r;
@@ -126,7 +198,7 @@ function computeDay(key, rec, settings, opts) {
 
 function computeWorkDay(key, rec, settings, opts) {
   const w = settings.work;
-  const dt = dayType(key, settings.holidays);
+  const dt = dayTypeOf(key, settings);
   const g = (rec && rec.gps) || {};
   const inHM = (rec && rec.manualIn) || g.in || null;
   // Left before the cutoff and has not come back (morning shift, leaving early): the departure is a provisional check-out
@@ -140,11 +212,10 @@ function computeWorkDay(key, rec, settings, opts) {
     trips: g.trips || [], note: (rec && rec.note) || '',
     trip: !!((g.trips && g.trips.length) || (rec && rec.manualTrip)),
     workedMin: 0, lunchMin: 0, regularMin: 0, cong: 0, paidCong: 0,
-    rawExtra: 0, ot150: 0, ot200: 0, ot300: 0,
+    rawExtra: 0, ot150: 0, ot200: 0, ot300: 0, spansLunch: false,
     missingOut: false, live: false, invalid: false, inR: null, outR: null,
   };
-  const workable = dt.dow !== 0; // Mon–Sat
-  if ((dt.type === 'holiday' || dt.type === 'comp') && workable) r.paidCong = 1; // paid holiday
+  if ((dt.type === 'holiday' || dt.type === 'comp') && dt.work) r.paidCong = 1; // paid holiday on a workday
   if (!inHM) return r;
   const RB = Math.max(1, +w.roundMin || 15), mode = w.roundMode || 'company';
   const rIn = m => mode === 'none' ? m : mode === 'nearest' ? Math.round(m / RB) * RB : mode === 'down' ? Math.floor(m / RB) * RB : Math.ceil(m / RB) * RB;
@@ -160,6 +231,7 @@ function computeWorkDay(key, rec, settings, opts) {
   r.outR = fromMin(outMin);
   if (outMin <= inMin) { r.invalid = !r.live && toMin(outHM) <= toMin(inHM); return r; }
   r.lunchMin = overlap(inMin, outMin, toMin(w.lunchStart), toMin(w.lunchEnd));
+  r.spansLunch = toMin(inHM) <= toMin(w.lunchStart) && (r.live ? outMin : toMin(outHM)) >= toMin(w.lunchEnd);
   r.workedMin = outMin - inMin - r.lunchMin;
   const B = Math.max(1, +w.otBlockMin || 30);
   const floorB = m => Math.floor(m / B) * B;
@@ -173,7 +245,7 @@ function computeWorkDay(key, rec, settings, opts) {
     if (dt.type === 'weekday' && r.trip && r.workedMin >= (+w.tripFullDayHours || 7) * 60) r.cong = 1;
     r.rawExtra = Math.max(0, r.workedMin - std);
     r.ot150 = floorB(r.rawExtra);
-  } else if (dt.type === 'sunday' || dt.type === 'comp') {
+  } else if (dt.type === 'sunday' || dt.type === 'rest' || dt.type === 'comp') {
     r.ot200 = floorB(r.workedMin);
   } else if (dt.type === 'holiday') {
     r.ot300 = floorB(r.workedMin);
@@ -202,9 +274,9 @@ function contractOf(settings) {
 function salaryOn(key, contract) {
   for (const status of ['official', 'probation']) {
     const p = contract[status];
-    if (!p || !p.from || !(p.gross > 0) || key < p.from || (p.to && key > p.to)) continue;
-    const base = p.base > 0 ? p.base : p.gross;
-    return { id: status, status, from: p.from, to: p.to, gross: p.gross, base, amount: p.gross, otBase: base };
+    if (!p || !p.from || !(p.gross > 0 || p.base > 0) || key < p.from || (p.to && key > p.to)) continue;
+    const base = p.base > 0 ? p.base : p.gross, gross = p.gross > 0 ? p.gross : base;
+    return { id: status, status, from: p.from, to: p.to, gross, base, amount: gross, otBase: base };
   }
   return null;
 }
@@ -226,6 +298,8 @@ const TAX = {
   personal: 15500000, dependant: 6200000,
   brackets: [[10e6, 0.05], [30e6, 0.10], [60e6, 0.20], [100e6, 0.30], [Infinity, 0.35]],
   flatRate: 0.10, flatThreshold: [['2026-01-01', 2000000], ['2026-07-01', 5000000]],
+  // Cash meal allowance tax-free up to this amount a month (Circular 26/2016; 1,200,000 from 1 Jul 2026, Decree 253/2026 Art. 8)
+  mealCap: [['2016-01-01', 730000], ['2026-07-01', 1200000]],
 };
 const asOf = (table, key) => table.filter(([d]) => d <= key).reduce((v, [, x]) => x, table[0][1]);
 
@@ -242,10 +316,10 @@ function progressiveTax(income) {
 function insuranceFor(y, m, rows, contract) {
   const off = contract.official, first = y + '-' + pad(m) + '-01';
   const none = reason => ({ due: false, reason, base: 0, social: 0, health: 0, unemployment: 0, total: 0 });
-  if (!off.from || !(off.gross > 0)) return none(rows.some(r => r.salary && r.salary.status === 'probation') ? 'probation' : 'noContract');
+  if (!off.from || !(off.gross > 0 || off.base > 0)) return none(rows.some(r => r.salary && r.salary.status === 'probation') ? 'probation' : 'noContract');
   let covered = 0, notWorked = 0;
   for (const r of rows) {
-    if (r.dt.dow === 0) continue;                       // Sunday
+    if (!r.dt.work) continue;                           // weekly rest day
     const inC = r.key >= off.from && (!off.to || r.key <= off.to);
     if (inC) { covered++; notWorked += r.unpaidLeave; } else notWorked++;
   }
@@ -262,8 +336,14 @@ function insuranceFor(y, m, rows, contract) {
 /* Pay, insurance, PIT and take-home pay of a computed month. */
 function deductionsFor(y, m, rows, totals, contract) {
   const ins = insuranceFor(y, m, rows, contract);
-  const incomeOf = st => Math.round(rows.filter(r => r.salary && r.salary.status === st)
-    .reduce((a, r) => a + r.cong * r.daily + r.paidCong * r.daily + r.paidLeave * r.baseDaily, 0));
+  const first = y + '-' + pad(m) + '-01';
+  // Taxable income per period: day pay + taxable items + the part of meal allowances above the legal cap
+  const sumSt = (st, f) => Math.round(rows.filter(r => r.salary && r.salary.status === st).reduce((a, r) => a + f(r), 0));
+  const mealCap = asOf(TAX.mealCap, first);
+  const meal = { probation: sumSt('probation', r => r.mealRaw), official: sumSt('official', r => r.mealRaw) };
+  const mealTotal = meal.probation + meal.official, mealExempt = Math.min(mealTotal, mealCap);
+  const mealExcess = st => mealTotal ? Math.round((meal[st] / mealTotal) * (mealTotal - mealExempt)) : 0;
+  const incomeOf = st => sumSt(st, r => r.cong * r.daily + r.paidCong * r.daily + r.paidLeave * r.leaveDaily + r.taxableRaw) + mealExcess(st);
   const probInc = incomeOf('probation'), offInc = incomeOf('official');
   const deps = Math.max(0, Math.floor(+contract.dependents || 0));
   const family = TAX.personal + deps * TAX.dependant;
@@ -271,70 +351,115 @@ function deductionsFor(y, m, rows, totals, contract) {
   const progIncome = offInc + (mode === 'progressive' ? probInc : 0);
   const taxable = Math.max(0, progIncome - ins.total - family);
   const pitProgressive = progIncome > 0 ? progressiveTax(taxable) : 0;
-  const threshold = asOf(TAX.flatThreshold, y + '-' + pad(m) + '-01');
+  const threshold = asOf(TAX.flatThreshold, first);
   const flatDue = mode === 'flat10' && probInc >= threshold;
   const pitFlat = flatDue ? Math.round(probInc * TAX.flatRate) : 0;
   const pit = pitProgressive + pitFlat;
+  const exemptItems = totals.items.filter(i => i.tax === 'exempt').reduce((a, i) => a + i.amount, 0);
   return {
     insurance: ins, probationIncome: probInc, officialIncome: offInc, otExempt: totals.otPay,
+    mealCap, mealTotal, mealExempt, exemptItems,
     mode, dependents: deps, family, progIncome, taxable, pitProgressive,
     flatThreshold: threshold, flatDue, pitFlat, pit,
     gross: totals.total, totalDeductions: ins.total + pit, net: totals.total - ins.total - pit,
   };
 }
 
+/* Standard workdays: the workdays of the week in the month (holidays included), or a fixed number. */
 function stdDays(y, m, settings) {
   const mode = settings.work.stdDaysMode;
   if (mode !== 'auto' && +mode > 0) return +mode;
+  const wd = workDaysOf(settings);
   let n = 0;
-  for (let d = 1; d <= daysInMonth(y, m); d++) if (new Date(y, m - 1, d).getDay() !== 0) n++;
+  for (let d = 1; d <= daysInMonth(y, m); d++) if (wd.includes(new Date(y, m - 1, d).getDay())) n++;
   return n;
 }
 
-/* Computes a month. days: {'YYYY-MM-DD': rec}. now: {key, min} for today's running total. */
-function computeMonth(y, m, days, settings, now) {
+const itemApplies = (it, sal) => sal && (it.when === 'both' || !it.when || it.when === sal.status);
+/* Amount of one pay item for one day (unrounded). rate: the month's performance %. */
+function itemAmount(it, r, sal, std, rate) {
+  if (!itemApplies(it, sal)) return 0;
+  const amt = +it.amount || 0;
+  switch (it.kind) {
+    case 'perDay': return amt * r.cong;
+    case 'lunchDay': return r.cong > 0 && r.spansLunch ? amt : 0;
+    case 'byDays': return amt * r.cong / std;
+    case 'fixed': return r.dt.work ? amt / std : 0;
+    case 'performance': return sal.base * (rate || 0) / 100 * r.cong / std;
+    default: return 0;
+  }
+}
+/* The month's performance rating: chosen in the Pay tab (stored on the month), else the policy default. */
+function ratingFor(P, chosen) {
+  const list = P.ratings || [];
+  return list.find(x => x.id === chosen) || list.find(x => x.id === P.defaultRating) || list[0] || null;
+}
+
+/* Computes a month. days: {'YYYY-MM-DD': rec}. now: {key, min} for today's running total.
+   month: the stored month ({rating}) for monthly inputs. */
+function computeMonth(y, m, days, settings, now, month) {
   const std = stdDays(y, m, settings);
   const rows = [];
-  const C = contractOf(settings);
+  const C = contractOf(settings), P = policyOf(settings);
+  const rating = ratingFor(P, month && month.rating);
+  const items = (P.items || []).map(it => ({ ...it, raw: 0 }));
   const t = { workedMin: 0, cong: 0, paidCong: 0, paidLeave: 0, unpaidLeave: 0, ot150: 0, ot200: 0, ot300: 0,
-    workPay: 0, holidayPay: 0, leavePay: 0, ot150Pay: 0, ot200Pay: 0, ot300Pay: 0,
-    basePay: 0, otPay: 0, total: 0, tripDays: 0, missing: 0, noSalaryDays: 0 };
+    workPay: 0, holidayPay: 0, leavePay: 0, ot150Pay: 0, ot200Pay: 0, ot300Pay: 0, itemsPay: 0,
+    basePay: 0, otPay: 0, total: 0, tripDays: 0, missing: 0, noSalaryDays: 0,
+    wfhDays: 0, otPending: 0, lunchDays: 0, t13Cong: 0 };
   const raw = { workPay: 0, holidayPay: 0, leavePay: 0, ot150Pay: 0, ot200Pay: 0, ot300Pay: 0 };
   for (let d = 1; d <= daysInMonth(y, m); d++) {
     const key = y + '-' + pad(m) + '-' + pad(d);
-    const rec = days[key];
-    const r = computeDay(key, rec, settings, now && now.key === key ? { nowMin: now.min } : null);
+    const opts = now && now.key === key ? { nowMin: now.min } : null;
+    const r = computeDay(key, days[key] || {}, settings, opts);
     const sal = salaryOn(key, C);
     r.salary = sal;
-    r.daily = sal ? sal.gross / std : 0;             // day rate: gross pay
-    r.baseDaily = sal ? sal.base / std : 0;          // paid leave: contract base salary
-    r.hourly = sal ? sal.base / std / 8 : 0;         // OT hourly rate: contract base salary
+    const pick = (mode) => sal ? (mode === 'gross' ? sal.gross : sal.base) / std : 0;
+    r.daily = pick(P.dayPay);                         // day rate
+    r.leaveDaily = pick(P.leavePay);                  // paid leave rate
+    r.baseDaily = r.leaveDaily;
+    r.hourly = pick(P.otBasis) / 8;                   // OT hourly rate
     r.workPay = Math.round(r.cong * r.daily);
     r.holidayPay = Math.round(r.paidCong * r.daily);
-    r.leavePay = Math.round(r.paidLeave * r.baseDaily);
+    r.leavePay = Math.round(r.paidLeave * r.leaveDaily);
     r.ot150Pay = Math.round(r.ot150 / 60 * 1.5 * r.hourly);
     r.ot200Pay = Math.round(r.ot200 / 60 * 2 * r.hourly);
     r.ot300Pay = Math.round(r.ot300 / 60 * 3 * r.hourly);
+    r.items = {}; r.taxableRaw = 0; r.mealRaw = 0;
+    let itemsDay = 0;
+    for (const it of items) {
+      const v = itemAmount(it, r, sal, std, rating ? rating.pct : 0);
+      if (!v) continue;
+      r.items[it.id] = v; it.raw += v; itemsDay += v;
+      if (it.tax === 'meal') r.mealRaw += v; else if (it.tax !== 'exempt') r.taxableRaw += v;
+    }
     r.basePay = r.workPay + r.holidayPay + r.leavePay;
     r.otPay = r.ot150Pay + r.ot200Pay + r.ot300Pay;
-    r.total = r.basePay + r.otPay;
+    r.itemsPay = Math.round(itemsDay);
+    r.total = r.basePay + r.otPay + r.itemsPay;
     if (!sal && (r.cong || r.paidCong || r.paidLeave || r.ot150 || r.ot200 || r.ot300)) t.noSalaryDays++;
     t.workedMin += r.workedMin; t.cong += r.cong; t.paidCong += r.paidCong;
     t.paidLeave += r.paidLeave; t.unpaidLeave += r.unpaidLeave;
     t.ot150 += r.ot150; t.ot200 += r.ot200; t.ot300 += r.ot300;
+    if (r.wfh && r.cong > 0) t.wfhDays++;
+    if (r.cong > 0 && r.spansLunch) t.lunchDays++;
+    t.otPending += r.otPending;
+    if (sal) t.t13Cong += r.cong + r.paidCong + r.paidLeave;   // days under contract counted for the 13th-month salary
     // Month totals add the unrounded day amounts, so a full month of work pays exactly the monthly gross
-    raw.workPay += r.cong * r.daily; raw.holidayPay += r.paidCong * r.daily; raw.leavePay += r.paidLeave * r.baseDaily;
+    raw.workPay += r.cong * r.daily; raw.holidayPay += r.paidCong * r.daily; raw.leavePay += r.paidLeave * r.leaveDaily;
     raw.ot150Pay += r.ot150 / 60 * 1.5 * r.hourly; raw.ot200Pay += r.ot200 / 60 * 2 * r.hourly; raw.ot300Pay += r.ot300 / 60 * 3 * r.hourly;
     if (r.trip) t.tripDays++;
     if (r.missingOut || r.invalid) t.missing++;
     rows.push(r);
   }
-  t.cong = Math.round(t.cong * 100) / 100;
   for (const k in raw) t[k] = Math.round(raw[k]);
+  t.items = items.map(it => ({ id: it.id, tpl: it.tpl, name: it.name, kind: it.kind, tax: it.tax, unit: +it.amount || 0, amount: Math.round(it.raw) }));
+  t.itemsPay = t.items.reduce((a, i) => a + i.amount, 0);
   t.basePay = t.workPay + t.holidayPay + t.leavePay;
   t.otPay = t.ot150Pay + t.ot200Pay + t.ot300Pay;
-  t.total = t.basePay + t.otPay;
-  return { y, m, std, rows, totals: t, contract: C, deductions: deductionsFor(y, m, rows, t, C) };
+  t.total = t.basePay + t.otPay + t.itemsPay;
+  t.wfhCap = P.wfh && P.wfhCapPct > 0 ? Math.floor(std * P.wfhCapPct / 100 + 1e-9) : null;
+  return { y, m, std, rows, totals: t, contract: C, policy: P, rating, deductions: deductionsFor(y, m, rows, t, C) };
 }
 
 /* Annual leave used in a year. monthDays(m) returns that month's {key: rec}. */
@@ -344,13 +469,13 @@ function leaveUsed(y, monthDays, settings) {
     const days = monthDays(m) || {};
     for (const [key, rec] of Object.entries(days)) {
       if (!rec || !rec.leave || rec.leave.type !== 'paid') continue;
-      const dt = dayType(key, settings.holidays);
-      if (dt.type === 'weekday') used += rec.leave.part === 'am' || rec.leave.part === 'pm' ? 0.5 : 1;
+      const dt = dayTypeOf(key, settings);
+      if (dt.type === 'weekday') used += leaveHours(rec.leave) / 8;
       else if (dt.type === 'saturday') used += 1;
     }
   }
   const quota = Math.max(0, +contractOf(settings).leaveDaysPerYear || 0);
-  return { used, quota, left: quota - used };
+  return { used: Math.round(used * 1000) / 1000, quota, left: Math.round((quota - used) * 1000) / 1000 };
 }
 
 /* ===== GPS state machine (office day / trip day) =====

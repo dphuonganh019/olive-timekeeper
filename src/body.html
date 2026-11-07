@@ -37,6 +37,7 @@
           <span id="otToday"></span>
         </div>
         <div class="big-actions" id="punchActions"></div>
+        <label class="check small" id="wfhTodayBox" style="margin-top:12px" hidden><input type="checkbox" id="wfhToday"> <span data-i18n="today.wfh">Working from home today</span></label>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
@@ -91,6 +92,7 @@
       </div>
     </div>
     <div class="card pay-total" id="payTotal"></div>
+    <div class="card" id="payRating" hidden></div>
     <div class="card" id="payLines"></div>
     <div class="card" id="payLeave"></div>
     <div class="card" id="payContract"></div>
@@ -105,6 +107,54 @@
           <label class="f"><span data-i18n="set.lang">Language</span><select id="setLang"><option value="en">English</option><option value="vi">Tiếng Việt</option></select></label>
           <label class="f"><span data-i18n="set.name">Full name (printed on timesheets)</span><input id="setName" data-i18n-ph="set.namePh" placeholder="Jane Nguyen"></label>
         </div>
+      </div>
+      <div class="card" id="policyCard">
+        <h3 data-i18n="pol.title">Company pay policy</h3>
+        <p class="small muted" style="margin:6px 0 0" data-i18n="pol.desc">How your company counts workdays and pays you. Start from a preset, then adjust. Each phone keeps its own policy.</p>
+        <div class="fields" style="margin-top:12px">
+          <label class="f"><span data-i18n="pol.preset">Preset</span><select id="polPreset"><option value="gross" data-i18n="pol.preset.gross">Mon–Sat, day pay on gross salary</option><option value="office" data-i18n="pol.preset.office">Mon–Fri, title salary + performance + daily allowances</option><option value="custom" data-i18n="pol.preset.custom">Custom</option></select></label>
+          <div class="f" style="justify-content:flex-end"><button class="btn" id="polApply" data-i18n="pol.apply">Apply preset</button></div>
+        </div>
+        <h4 class="ct-h" data-i18n="pol.days">Workdays of the week</h4>
+        <div class="row" id="polDays" style="flex-wrap:wrap;gap:8px 14px"></div>
+        <h4 class="ct-h" data-i18n="pol.pay">Pay rules</h4>
+        <div class="fields">
+          <label class="f"><span data-i18n="pol.dayPay">Day pay is based on</span><select id="polDayPay"><option value="gross" data-i18n="pol.basis.gross">Gross monthly pay</option><option value="base" data-i18n="pol.basis.base">Base / title salary on the contract</option></select></label>
+          <label class="f"><span data-i18n="pol.otBasis">Overtime is based on</span><select id="polOtBasis"><option value="base" data-i18n="pol.basis.base">Base / title salary on the contract</option><option value="gross" data-i18n="pol.basis.gross">Gross monthly pay</option></select></label>
+          <label class="f"><span data-i18n="pol.leavePay">Paid leave is based on</span><select id="polLeavePay"><option value="base" data-i18n="pol.basis.base">Base / title salary on the contract</option><option value="gross" data-i18n="pol.basis.gross">Gross monthly pay</option></select></label>
+          <label class="f"><span data-i18n="pol.leaveUnit">Smallest unit of leave</span><select id="polLeaveUnit"><option value="4" data-i18n="pol.leaveUnit.4">Half a day</option><option value="1" data-i18n="pol.leaveUnit.1">1 hour</option></select></label>
+        </div>
+        <div class="row" style="flex-wrap:wrap;gap:10px 22px;margin-top:14px">
+          <label class="check"><input type="checkbox" id="polOtApproval"> <span data-i18n="pol.otApproval">Overtime is paid only when approved</span></label>
+          <label class="check"><input type="checkbox" id="polWfh"> <span data-i18n="pol.wfh">Work from home allowed</span></label>
+          <label class="check"><input type="checkbox" id="polT13"> <span data-i18n="pol.t13">Count days for the 13th-month salary</span></label>
+        </div>
+        <div class="fields" style="margin-top:12px" id="polWfhCapBox">
+          <label class="f"><span data-i18n="pol.wfhCap">WFH limit (% of standard workdays, 0 = none)</span><input type="number" min="0" max="100" step="1" id="polWfhCap"></label>
+        </div>
+        <h4 class="ct-h" data-i18n="pol.items">Allowances and performance pay</h4>
+        <p class="small muted" style="margin:0 0 8px" data-i18n="pol.itemsDesc">Added on top of day pay. Tap one to edit it.</p>
+        <ul class="sal-list" id="polItems"></ul>
+        <div class="fields" style="margin-top:12px" id="itemForm">
+          <label class="f"><span data-i18n="item.name">Name</span><input id="itName" data-i18n-ph="item.namePh" placeholder="Transport allowance"></label>
+          <label class="f"><span data-i18n="item.kind">Calculated</span><select id="itKind"><option value="perDay" data-i18n="item.kind.perDay">Per workday × amount</option><option value="lunchDay" data-i18n="item.kind.lunchDay">Per day worked through the lunch break</option><option value="byDays" data-i18n="item.kind.byDays">Monthly amount × workdays ÷ standard</option><option value="fixed" data-i18n="item.kind.fixed">Fixed monthly amount</option><option value="performance" data-i18n="item.kind.performance">Performance: base salary × the month's rating %</option></select></label>
+          <label class="f" id="itAmountBox"><span data-i18n="item.amount">Amount (VND)</span><input type="text" inputmode="numeric" id="itAmount" data-money placeholder="20,000"></label>
+          <label class="f"><span data-i18n="item.when">Applies during</span><select id="itWhen"><option value="both" data-i18n="item.when.both">Probation and permanent</option><option value="probation" data-i18n="ct.probation">Probation</option><option value="official" data-i18n="ct.official">Permanent</option></select></label>
+          <label class="f"><span data-i18n="item.tax">Personal income tax</span><select id="itTax"><option value="taxable" data-i18n="item.tax.taxable">Taxable</option><option value="exempt" data-i18n="item.tax.exempt">Tax-free</option><option value="meal" data-i18n="item.tax.meal">Meal allowance: tax-free up to the legal cap</option></select></label>
+          <div class="f" style="justify-content:flex-end"><div class="row"><button class="btn primary" id="itSave" data-i18n="item.save">Save item</button><button class="btn ghost" id="itNew" data-i18n="item.new">New</button></div></div>
+        </div>
+        <div id="polRatingsBox">
+          <h4 class="ct-h" data-i18n="pol.ratings">Performance ratings</h4>
+          <p class="small muted" style="margin:0 0 8px" data-i18n="pol.ratingsDesc">Choose the month's rating in the Pay tab. The default is used until you choose.</p>
+          <div id="polRatings"></div>
+          <div class="row" style="margin-top:8px"><button class="btn sm" id="rtAdd" data-i18n="pol.ratingAdd">+ Add rating</button></div>
+        </div>
+        <div class="row" style="margin-top:16px;flex-wrap:wrap">
+          <button class="btn sm" id="polExport" data-i18n="pol.export">Export policy file</button>
+          <button class="btn sm" id="polImport" data-i18n="pol.import">Import policy file</button>
+          <input type="file" id="polFile" accept="application/json,.json" hidden>
+        </div>
+        <p class="small muted" style="margin-bottom:0" data-i18n="pol.shareHint">The policy file holds the rules and allowances only, not your salary or timesheet, so colleagues can import it.</p>
       </div>
       <div class="card" id="contractCard">
         <h3 data-i18n="ct.title">Contract &amp; salary</h3>
@@ -172,7 +222,7 @@
           <label class="f"><span data-i18n="set.roundMin">Round check-in/out to blocks of (minutes)</span><input type="number" min="1" id="wRoundMin"></label>
           <label class="f"><span data-i18n="set.roundMode">Rounding</span><select id="wRoundMode"><option value="down" data-i18n="set.round.down">Round check-in and check-out down</option><option value="company" data-i18n="set.round.company">Round check-in up, check-out down</option><option value="nearest" data-i18n="set.round.nearest">Round to the nearest block</option><option value="none" data-i18n="set.round.none">No rounding</option></select></label>
           <label class="f"><span data-i18n="set.block">Minimum overtime / step (minutes)</span><input type="number" min="1" id="wBlock"></label>
-          <label class="f"><span data-i18n="set.std">Standard workdays per month</span><select id="wStd"><option value="auto" data-i18n="set.std.auto">Automatic: number of Mon–Sat days</option><option value="24">24</option><option value="26">26</option></select></label>
+          <label class="f"><span data-i18n="set.std">Standard workdays per month</span><select id="wStd"><option value="auto" data-i18n="set.std.auto">Automatic: workdays of the week in the month</option><option value="21">21</option><option value="22">22</option><option value="24">24</option><option value="26">26</option></select></label>
         </div>
         <p class="small muted" style="margin-bottom:0" data-i18n="set.rulesDesc"></p>
       </div>
@@ -210,6 +260,8 @@
     </div>
     <p class="small muted" id="edGps" style="margin:0"></p>
     <label class="check"><input type="checkbox" id="edTrip"> <span data-i18n="edit.trip">I went on a business trip this day</span></label>
+    <label class="check" id="edWfhBox"><input type="checkbox" id="edWfh"> <span data-i18n="edit.wfh">Worked from home (WFH)</span></label>
+    <label class="f" id="edOtBox"><span data-i18n="edit.otApproved">Approved overtime (hours)</span><input type="number" min="0" max="16" step="0.5" id="edOtApproved" inputmode="decimal" placeholder="0"><span class="hint" id="edOtHint"></span></label>
     <div class="leave-box" id="edLeaveBox">
       <label class="check"><input type="checkbox" id="edLeavePaid"> <span data-i18n="edit.leavePaid">Paid annual leave</span></label>
       <label class="check"><input type="checkbox" id="edLeaveUnpaid"> <span data-i18n="edit.leaveUnpaid">Unpaid leave</span></label>

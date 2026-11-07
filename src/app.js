@@ -162,6 +162,10 @@ function renderToday() {
   else if (r.inHM) { cls = 'in'; txt = T('today.status.in'); }
   st.className = 'pill ' + cls; st.textContent = txt;
 
+  const Pt = policyOf(settings);
+  $('#wfhTodayBox').hidden = !Pt.wfh || !r.dt.work; $('#wfhToday').checked = !!rec.wfh;
+  if (r.wfh && (r.inHM || rec.wfh)) { txt += ' · WFH'; }
+  st.textContent = txt;
   const act = $('#punchActions'), t = nowHM();
   if (!r.inHM) act.innerHTML = `<button class="btn primary" id="btnIn">${esc(T('today.btnIn', { t }))}</button>`;
   else if (r.provisionalOut) act.innerHTML = `<button class="btn primary" id="btnConfirmOut">${esc(T('today.btnConfirmOut', { t: r.outHM }))}</button><button class="btn" id="btnOut">${esc(T('today.btnOut', { t }))}</button>`;
@@ -181,6 +185,11 @@ function renderToday() {
   $('#signals').hidden = !sg.length;
   $('#signalList').innerHTML = sg.map(s => `<li class="${s.rejected ? 'rej' : ''}"><time>${esc(s.t)}</time><span>${esc(signalText(s))}</span></li>`).join('');
 }
+$('#wfhToday').addEventListener('change', () => {
+  const key = todayKey(), rec = recFor(key, true), on = $('#wfhToday').checked;
+  rec.wfh = on || undefined; logEvent(rec, nowHM(), on ? 'wfh.on' : 'wfh.off');
+  touch(key); afterEdit(); toast(T(on ? 'today.wfhOn' : 'today.wfhOff'));
+});
 function punch(kind) {
   if (!ready) { toast(T('toast.loading')); return; }
   const key = todayKey(), rec = recFor(key, true), t = nowHM();
@@ -386,7 +395,7 @@ async function startNativeGeofence() {
         lat: +o.lat, lng: +o.lng, radius: +o.radius, dwellMin: +w.dwellMin, name: o.name || T('office.default'),
         trackStart: w.trackStart, trackEnd: w.trackEnd, cutoff: w.afternoonCutoff, tripWindow: +w.tripWindowMin,
         lunchStart: w.lunchStart, lunchEnd: w.lunchEnd, finalizeMin: +w.leaveFinalizeMin,
-        offDays: settings.holidays.map(h => h.date), lang: LANG,
+        offDays: offDaysAhead(), lang: LANG,
       });
     } else { st = await Native.geo.getStatus(); }
   } catch (e) { gpsUI('off', esc(T('gps.nativeError', { msg: (e && e.message) || e }))); return; }
@@ -397,6 +406,12 @@ async function startNativeGeofence() {
   gpsTimer = setInterval(async () => { await syncGeofenceEvents(); refreshNative(); }, 30000);
 }
 
+/* Holidays plus the weekly rest days of the next 400 days: no tracking on those days */
+function offDaysAhead() {
+  const out = new Set(settings.holidays.map(h => h.date)), wd = workDaysOf(settings), d = new Date();
+  for (let i = 0; i < 400; i++, d.setDate(d.getDate() + 1)) if (!wd.includes(d.getDay())) out.add(dateKey(d));
+  return [...out];
+}
 let wakeSentinel = null;
 $('#wakeLock').addEventListener('change', async e => {
   if (e.target.checked) {
@@ -416,7 +431,7 @@ document.addEventListener('visibilitychange', async () => {
 function curMonthCalc() {
   const mo = months[monthKey(view.y, view.m)] || { days: {} };
   const n = new Date();
-  return computeMonth(view.y, view.m, mo.days, settings, { key: todayKey(), min: n.getHours() * 60 + n.getMinutes() });
+  return computeMonth(view.y, view.m, mo.days, settings, { key: todayKey(), min: n.getHours() * 60 + n.getMinutes() }, mo);
 }
 $$('[data-mnav]').forEach(b => b.addEventListener('click', async () => {
   let m = view.m + +b.dataset.mnav, y = view.y;
@@ -432,15 +447,17 @@ function typePill(r) {
   const t = r.dt.type;
   if (t === 'holiday') return `<span class="pill r300" title="${esc(dayLabel(r.dt))}">${esc(T('pill.hol'))}</span>`;
   if (t === 'comp') return `<span class="pill r200" title="${esc(dayLabel(r.dt))}">${esc(T('pill.comp'))}</span>`;
-  if (t === 'sunday') return `<span class="pill r200">${esc(dowShort(0))}</span>`;
+  if (t === 'sunday' || t === 'rest') return `<span class="pill r200">${esc(dowShort(r.dt.dow))}</span>`;
   if (t === 'saturday') return `<span class="pill">${esc(dowShort(6))}</span>`;
   return '';
 }
 const rnote = (raw, rd) => rd && rd !== raw ? `<span class="muted small"> → ${rd}</span>` : '';
 const dash = v => v ? v : '<span class="muted">—</span>';
 const tripText = r => r.trips.length ? r.trips.map(x => x.start + '–' + (x.end || '…')).join(', ') : T('month.yes');
-const leaveText = lv => T(lv.type === 'paid' ? 'leave.paid' : 'leave.unpaid') + (lv.part === 'am' ? ' · ' + T('edit.part.am') : lv.part === 'pm' ? ' · ' + T('edit.part.pm') : '');
-const leavePill = r => r.leave ? `<span class="pill ${r.leave.type === 'paid' ? 'leave' : 'unpaid'}">${esc(T(r.leave.type === 'paid' ? 'pill.leave' : 'pill.unpaid'))}${r.leave.days < 1 ? ' ½' : ''}</span>` : '';
+const leaveText = lv => T(lv.type === 'paid' ? 'leave.paid' : 'leave.unpaid') + (lv.hours > 0 && lv.hours < 8 && lv.part !== 'am' && lv.part !== 'pm' ? ' · ' + T('leave.hours', { n: fmtNum(lv.hours) }) : lv.part === 'am' ? ' · ' + T('edit.part.am') : lv.part === 'pm' ? ' · ' + T('edit.part.pm') : '');
+const leavePill = r => r.leave ? `<span class="pill ${r.leave.type === 'paid' ? 'leave' : 'unpaid'}">${esc(T(r.leave.type === 'paid' ? 'pill.leave' : 'pill.unpaid'))}${r.leave.days < 1 ? (r.leave.part === 'am' || r.leave.part === 'pm' ? ' ½' : ' ' + fmtNum(r.leave.hours) + 'h') : ''}</span>` : '';
+const wfhPill = r => r.wfh ? '<span class="pill in">WFH</span>' : '';
+const itemName = it => it.name || (it.tpl ? T('item.tpl.' + it.tpl) : '');
 function renderMonth(M) {
   const t = M.totals;
   $('#monthStats').innerHTML = [
@@ -451,18 +468,19 @@ function renderMonth(M) {
     ['OT 300%', fmtH(t.ot300), 'r300'],
     [T('stat.trip'), t.tripDays, 'trip'],
     [T('stat.leave'), fmtNum(t.paidLeave) + ' · ' + fmtNum(t.unpaidLeave), ''],
+    ...(M.policy.wfh ? [[T('stat.wfh'), t.wfhDays + (t.wfhCap != null ? ' / ' + t.wfhCap : ''), t.wfhCap != null && t.wfhDays > t.wfhCap ? 'r300' : '']] : []),
   ].map(([k, v, c]) => `<div class="stat ${c}"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`).join('');
   $('#monthWarn').innerHTML = t.missing ? `<div class="notice">${esc(T('month.warn', { n: t.missing }))}</div>` : '';
   const tk = todayKey();
   const th = (k, n) => `<th${n ? ' class="n"' : ''}>${esc(T(k))}</th>`;
   const head = `<thead><tr><th class="sticky">${esc(T('col.date'))}</th>${th('col.type')}${th('col.in')}${th('col.out')}${th('col.lunch', 1)}${th('col.worked', 1)}${th('col.cong', 1)}<th class="n">OT 150%</th><th class="n">OT 200%</th><th class="n">OT 300%</th>${th('col.trip')}${th('col.note')}</tr></thead>`;
   const body = M.rows.map(r => {
-    const cls = [r.dt.type === 'sunday' || r.dt.type === 'comp' ? 'sun' : '', r.dt.type === 'holiday' ? 'hol' : '', !r.inHM ? 'off' : '', r.key === tk ? 'today' : ''].join(' ');
+    const cls = [r.dt.type === 'sunday' || r.dt.type === 'rest' || r.dt.type === 'comp' ? 'sun' : '', r.dt.type === 'holiday' ? 'hol' : '', !r.inHM ? 'off' : '', r.key === tk ? 'today' : ''].join(' ');
     const warn = r.missingOut || r.invalid ? ' ⚠' : '';
     const cong = r.cong + r.paidCong + r.paidLeave;
     return `<tr class="${cls}" data-key="${r.key}">
       <td class="sticky"><b>${esc(fmtDM(r.key))}</b> <span class="muted">${esc(dowShort(r.dt.dow))}</span>${warn}</td>
-      <td>${typePill(r)}${leavePill(r)}</td>
+      <td>${typePill(r)}${leavePill(r)}${wfhPill(r)}</td>
       <td class="mono">${r.inHM ? esc(r.inHM) + `<span class="srcdot ${r.inSrc}"></span>` + rnote(r.inHM, r.inR) : dash()}</td>
       <td class="mono">${r.outHM ? esc(r.outHM) + `<span class="srcdot ${r.outSrc}"></span>` + (r.provisionalOut ? `<span class="muted small"> ${esc(T('month.provisional'))}</span>` : '') + rnote(r.outHM, r.outR) : (r.live ? `<span class="muted">${esc(T('month.working'))}</span>` : dash())}</td>
       <td class="n">${r.lunchMin ? r.lunchMin + "'" : dash()}</td>
@@ -491,12 +509,30 @@ function payBreakdown(M) {
   const single = sals.length === 1 ? rows.find(r => r.salary).salary : null;
   return {
     single, multi: sals.length > 1, otBase: single ? single.base : null,
+    dayRate: single ? (M.policy.dayPay === 'gross' ? single.gross : single.base) / M.std : null,
+    leaveRate: single ? (M.policy.leavePay === 'gross' ? single.gross : single.base) / M.std : null,
+    hourly: single ? (M.policy.otBasis === 'gross' ? single.gross : single.base) / M.std / 8 : null,
+    items: t.items.filter(i => i.amount > 0 || i.kind === 'performance'),
     workCong: round2(t.cong), paidCong: t.paidCong, paidLeave: t.paidLeave, unpaidLeave: t.unpaidLeave,
     workPay: t.workPay, paidPay: t.holidayPay, leavePay: t.leavePay,
     ot150Pay: t.ot150Pay, ot200Pay: t.ot200Pay, ot300Pay: t.ot300Pay, D: M.deductions,
   };
 }
 const statusLabel = s => T(s === 'official' ? 'pay.status.official' : 'pay.status.probation');
+/* One pay item's explanation: "21 workdays × 20,000", "19,658,063 × 33.33% × 21/21 workdays" … */
+function itemDetail(i, M) {
+  const t = M.totals, b = { cong: fmtNum(round2(t.cong)), std: M.std, amt: fmtVnd(i.unit) };
+  const tax = i.tax === 'exempt' ? ' · ' + T('item.tax.exempt') : i.tax === 'meal' ? ' · ' + T('item.mealSub', { cap: fmtVnd(M.deductions.mealCap) }) : '';
+  const sal = (M.rows.find(r => r.salary) || {}).salary;
+  switch (i.kind) {
+    case 'perDay': return T('item.d.perDay', b) + tax;
+    case 'lunchDay': return T('item.d.lunchDay', { ...b, n: t.lunchDays }) + tax;
+    case 'byDays': return T('item.d.byDays', b) + tax;
+    case 'fixed': return T('item.d.fixed', b) + tax;
+    case 'performance': return (M.rating ? T('item.d.perf', { ...b, base: sal ? fmtVnd(sal.base) : '—', pct: fmtPct(M.rating.pct), rating: M.rating.name }) : T('item.d.perfNone')) + tax;
+    default: return tax;
+  }
+}
 const neg = n => n ? '−' + fmtVnd(n) : fmtVnd(0);
 /* Insurance and PIT lines shared by the Pay tab and the exports: [label, detail, amount] */
 function deductionLines(D) {
@@ -525,9 +561,11 @@ function renderPay(M) {
   $('#payTotal').innerHTML = `<span class="small muted">${esc(T('pay.netEstimate', { month: monthInline(view.m) }))}</span>
     <span class="v num">${fmtVnd(D.net)}</span>
     <span class="small">${esc(T('pay.grossLine', { gross: fmtVnd(D.gross), ded: fmtVnd(D.totalDeductions) }))}</span>
-    <span class="row small"><span class="pill ${b.single && b.single.status === 'official' ? 'in' : ''}">${esc(statusTxt)}</span><span class="muted">${esc(T('pay.formula', { std: M.std }))}</span></span>
-    ${t.noSalaryDays ? `<div class="notice" style="margin-top:8px">${esc(T('pay.noSalaryWarn', { n: t.noSalaryDays }))}</div>` : ''}`;
-  const hourly = b.single ? b.otBase / M.std / 8 : null;
+    <span class="row small"><span class="pill ${b.single && b.single.status === 'official' ? 'in' : ''}">${esc(statusTxt)}</span><span class="muted">${esc(T(M.policy.dayPay === 'base' ? 'pay.formulaBase' : 'pay.formula', { std: M.std }))}</span></span>
+    ${t.noSalaryDays ? `<div class="notice" style="margin-top:8px">${esc(T('pay.noSalaryWarn', { n: t.noSalaryDays }))}</div>` : ''}
+    ${t.otPending ? `<div class="notice" style="margin-top:8px">${esc(T('pay.otPending', { h: fmtHdec(t.otPending) }))}</div>` : ''}
+    ${t.wfhCap != null && t.wfhDays > t.wfhCap ? `<div class="notice" style="margin-top:8px">${esc(T('pay.wfhOver', { n: t.wfhDays, cap: t.wfhCap, pct: M.policy.wfhCapPct }))}</div>` : ''}`;
+  const hourly = b.hourly;
   const sub = txt => txt ? `<br><span class="small muted">${esc(txt)}</span>` : '';
   const unit = pct => hourly ? T('pay.perHour', { rate: fmtVnd(hourly), pct }) : '';
   const hrs = min => esc(T('pay.hours', { h: fmtHdec(min) }));
@@ -535,13 +573,14 @@ function renderPay(M) {
   const sec = k => `<tr><td class="sec" colspan="2">${esc(T(k))}</td></tr>`;
   $('#payLines').innerHTML = `<h3>${esc(T('pay.details'))}</h3><table class="lines" style="margin-top:6px"><tbody>
     ${sec('pay.sec.income')}
-    ${line(esc(T('pay.line.work')), T('pay.line.workSub', { n: fmtNum(b.workCong) }) + (b.single ? ' × ' + fmtVnd(b.single.gross / M.std) : ''), fmtVnd(b.workPay))}
+    ${line(esc(T('pay.line.work')), T('pay.line.workSub', { n: fmtNum(b.workCong) }) + (b.single ? ' × ' + fmtVnd(b.dayRate) : ''), fmtVnd(b.workPay))}
     ${line(esc(T('pay.line.paid')), T('pay.line.paidSub', { n: b.paidCong }), fmtVnd(b.paidPay))}
-    ${line(esc(T('pay.line.leave')), T('pay.line.leaveSub', { n: fmtNum(b.paidLeave) }) + (b.single ? ' × ' + fmtVnd(b.single.base / M.std) : ''), fmtVnd(b.leavePay))}
+    ${line(esc(T(M.policy.leavePay === 'gross' ? 'pay.line.leave' : 'pay.line.leave')), T(M.policy.leavePay === 'gross' ? 'pay.line.leaveSubGross' : 'pay.line.leaveSub', { n: fmtNum(b.paidLeave) }) + (b.single ? ' × ' + fmtVnd(b.leaveRate) : ''), fmtVnd(b.leavePay))}
+    ${b.items.map(i => line(esc(itemName(i)), itemDetail(i, M), fmtVnd(i.amount))).join('')}
     ${line(`<span class="pill r150">${esc(T('pay.line.ot150'))}</span> ${hrs(t.ot150)}`, unit(150), fmtVnd(b.ot150Pay))}
     ${line(`<span class="pill r200">${esc(T('pay.line.ot200'))}</span> ${hrs(t.ot200)}`, unit(200), fmtVnd(b.ot200Pay))}
     ${line(`<span class="pill r300">${esc(T('pay.line.ot300'))}</span> ${hrs(t.ot300)}`, unit(300), fmtVnd(b.ot300Pay))}
-    <tr class="sub"><td>${esc(T('pay.line.gross'))}${sub(T('pay.line.grossSub', { ot: fmtVnd(t.otPay) }))}</td><td class="n">${fmtVnd(D.gross)}</td></tr>
+    <tr class="sub"><td>${esc(T('pay.line.gross'))}${sub(D.mealExempt || D.exemptItems ? T('pay.line.grossSubFree', { ot: fmtVnd(t.otPay), free: fmtVnd(D.mealExempt + D.exemptItems) }) : T('pay.line.grossSub', { ot: fmtVnd(t.otPay) }))}</td><td class="n">${fmtVnd(D.gross)}</td></tr>
     ${sec('pay.sec.deduct')}
     ${deductionLines(D).map(([l, d, a]) => line(esc(l), d, neg(a), a ? 'neg' : '')).join('')}
     <tr class="sub"><td>${esc(T('pay.line.deductTotal'))}</td><td class="n neg">${neg(D.totalDeductions)}</td></tr>
@@ -549,6 +588,18 @@ function renderPay(M) {
     <p class="small muted" style="margin-bottom:0">${esc(T('pay.note'))}</p>`;
   renderLeaveCard(M);
   renderContractSummary(M);
+  renderRating(M);
+}
+/* The month's performance rating (only when a performance item exists) */
+function renderRating(M) {
+  const box = $('#payRating'), has = M.policy.items.some(i => i.kind === 'performance') && M.policy.ratings.length;
+  box.hidden = !has; if (!has) return;
+  const mo = months[monthKey(view.y, view.m)] || {};
+  box.innerHTML = `<div class="fields"><label class="f"><span>${esc(T('pay.rating', { month: monthInline(view.m) }))}</span><select id="payRatingSel">${M.policy.ratings.map(r => `<option value="${esc(r.id)}" ${M.rating && M.rating.id === r.id ? 'selected' : ''}>${esc(r.name)} · ${esc(fmtPct(r.pct))}%</option>`).join('')}</select><span class="hint">${esc(T(mo.rating ? 'pay.ratingChosen' : 'pay.ratingDefault'))}</span></label></div>`;
+  $('#payRatingSel').onchange = async e => {
+    const mo2 = await ensureMonth(view.y, view.m); mo2.rating = e.target.value;
+    saveMonth(monthKey(view.y, view.m)); renderMonthViews(); toast(T('set.saved'));
+  };
 }
 /* Annual leave needs every month of the year */
 const loadedYears = new Set();
@@ -565,14 +616,26 @@ function renderLeaveCard(M) {
       <div class="stat"><div class="k">${esc(T('lv.used', { y: view.y }))}</div><div class="v">${fmtNum(u.used)} / ${fmtNum(u.quota)}</div></div>
       <div class="stat ${u.left < 0 ? 'r300' : 'r200'}"><div class="k">${esc(T('lv.left'))}</div><div class="v">${fmtNum(u.left)}</div></div>
       <div class="stat"><div class="k">${esc(T('lv.month'))}</div><div class="v">${fmtNum(t.paidLeave)} · ${fmtNum(t.unpaidLeave)}</div></div>
+      ${M.policy.t13 ? `<div class="stat"><div class="k">${esc(T('lv.t13', { y: view.y }))}</div><div class="v">${fmtNum(round2(yearT13(view.y)))}</div></div>` : ''}
+      ${M.policy.wfh ? `<div class="stat ${t.wfhCap != null && t.wfhDays > t.wfhCap ? 'r300' : ''}"><div class="k">${esc(T('lv.wfh'))}</div><div class="v">${t.wfhDays}${t.wfhCap != null ? ' / ' + t.wfhCap : ''}</div></div>` : ''}
     </div>
     ${u.left < 0 ? `<div class="notice" style="margin-top:10px">${esc(T('lv.over', { n: fmtNum(-u.left) }))}</div>` : ''}
     <p class="small muted" style="margin-bottom:0">${esc(T('lv.hint'))}</p>`;
   ensureYear(view.y).then(loaded => { if (loaded && !$('#view-pay').hidden) renderLeaveCard(curMonthCalc()); });
 }
+/* Days counted for the 13th-month salary this year (workdays, paid holidays, paid leave) */
+function yearT13(y) {
+  let n = 0;
+  for (let m = 1; m <= 12; m++) {
+    const mo = months[monthKey(y, m)]; if (!mo) continue;
+    n += computeMonth(y, m, mo.days, settings, null, mo).totals.t13Cong;
+  }
+  return n;
+}
 function renderContractSummary(M) {
   const C = M.contract;
-  const item = (k, p) => p.from && p.gross > 0 ? `<li><span><b>${esc(T(k))}</b><br><span class="small muted">${esc(fmtDMY(p.from))} – ${esc(p.to ? fmtDMY(p.to) : T('ct.openEnded'))}</span></span><span class="small" style="text-align:right">${esc(T('ct.grossIs', { amount: fmtVnd(p.gross) }))}<br><span class="muted">${esc(T('ct.baseIs', { amount: fmtVnd(p.base > 0 ? p.base : p.gross) }))}</span></span></li>` : '';
+  const baseMode = M.policy.dayPay === 'base';
+  const item = (k, p) => p.from && (p.gross > 0 || p.base > 0) ? `<li><span><b>${esc(T(k))}</b><br><span class="small muted">${esc(fmtDMY(p.from))} – ${esc(p.to ? fmtDMY(p.to) : T('ct.openEnded'))}</span></span><span class="small" style="text-align:right">${baseMode ? esc(T('ct.titleIs', { amount: fmtVnd(p.base) })) : esc(T('ct.grossIs', { amount: fmtVnd(p.gross) })) + '<br><span class="muted">' + esc(T('ct.baseIs', { amount: fmtVnd(p.base > 0 ? p.base : p.gross) })) + '</span>'}</span></li>` : '';
   const list = item('ct.probation', C.probation) + item('ct.official', C.official);
   $('#payContract').innerHTML = `<div class="spread"><h3>${esc(T('ct.title'))}</h3><button class="btn sm" id="goContract">${esc(T('ct.edit'))}</button></div>
     <ul class="sal-list" style="margin-top:12px">${list || `<li class="empty small" style="display:block">${esc(T('ct.empty'))}</li>`}</ul>`;
@@ -584,9 +647,9 @@ let editKey = null, delArmed = false;
 async function openEdit(key) {
   const [y, m] = key.split('-').map(Number); await ensureMonth(y, m);
   editKey = key; delArmed = false; $('#edDelete').textContent = T('edit.delete');
-  const rec = recFor(key) || {}, g = rec.gps || {}, dt = dayType(key, settings.holidays);
+  const rec = recFor(key) || {}, g = rec.gps || {}, dt = dayTypeOf(key, settings);
   $('#edTitle').textContent = T('edit.title', { d: fmtDMY(key) });
-  $('#edMeta').innerHTML = `<span class="pill">${esc(dowShort(dt.dow))}</span><span class="pill ${dt.type === 'holiday' ? 'r300' : dt.type === 'sunday' || dt.type === 'comp' ? 'r200' : ''}">${esc(dayLabel(dt))}</span>`;
+  $('#edMeta').innerHTML = `<span class="pill">${esc(dowShort(dt.dow))}</span><span class="pill ${dt.type === 'holiday' ? 'r300' : dt.type === 'sunday' || dt.type === 'rest' || dt.type === 'comp' ? 'r200' : ''}">${esc(dayLabel(dt))}</span>`;
   $('#edDate').value = key;
   $('#edIn').value = rec.manualIn || g.in || '';
   $('#edOut').value = rec.manualOut || g.out || '';
@@ -594,7 +657,14 @@ async function openEdit(key) {
   $('#edTrip').checked = !!(rec.manualTrip || (g.trips && g.trips.length));
   const lv = rec.leave || {};
   $('#edLeavePaid').checked = lv.type === 'paid'; $('#edLeaveUnpaid').checked = lv.type === 'unpaid';
-  $('#edLeavePart').value = lv.part || 'full';
+  fillLeaveParts();
+  $('#edLeavePart').value = leavePartValue(lv);
+  const P = policyOf(settings);
+  $('#edWfhBox').hidden = !P.wfh || !dt.work; $('#edWfh').checked = !!rec.wfh;
+  $('#edOtBox').hidden = !P.otApproval;
+  $('#edOtApproved').value = rec.otApproved > 0 ? rec.otApproved : '';
+  const rd = computeDay(key, rec, settings);
+  $('#edOtHint').textContent = T('edit.otRecorded', { h: fmtHdec(rd.otRecorded) });
   const leaveable = dt.type === 'weekday' || dt.type === 'saturday';
   $('#edLeaveBox').hidden = !leaveable;
   $('#edLeavePart').closest('label').hidden = dt.type === 'saturday';
@@ -609,6 +679,21 @@ async function openEdit(key) {
   $('#editModal').hidden = false; $('#edIn').focus();
 }
 function closeEdit() { $('#editModal').hidden = true; editKey = null; }
+/* Leave choices follow the policy's smallest unit: half days, or whole hours */
+function fillLeaveParts() {
+  const unit = +policyOf(settings).leaveUnitHours || 4, sel = $('#edLeavePart');
+  const opts = unit >= 4 ? [['full', T('edit.part.full')], ['am', T('edit.part.am')], ['pm', T('edit.part.pm')]]
+    : [['full', T('edit.part.full')], ...[1, 2, 3, 4, 5, 6, 7].map(h => ['h' + h, T('leave.hours', { n: h })])];
+  sel.innerHTML = opts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('');
+}
+function leavePartValue(lv) {
+  const unit = +policyOf(settings).leaveUnitHours || 4;
+  if (!lv || !lv.type) return 'full';
+  const h = lv.hours > 0 ? +lv.hours : lv.part === 'am' || lv.part === 'pm' ? 4 : 8;
+  if (h >= 8) return 'full';
+  if (unit >= 4) return lv.part === 'pm' ? 'pm' : 'am';
+  return 'h' + Math.round(h);
+}
 function syncLeavePart() { $('#edLeavePart').disabled = !$('#edLeavePaid').checked && !$('#edLeaveUnpaid').checked; }
 $('#edLeavePaid').addEventListener('change', () => { if ($('#edLeavePaid').checked) $('#edLeaveUnpaid').checked = false; syncLeavePart(); });
 $('#edLeaveUnpaid').addEventListener('change', () => { if ($('#edLeaveUnpaid').checked) $('#edLeavePaid').checked = false; syncLeavePart(); });
@@ -634,8 +719,20 @@ $('#edSave').addEventListener('click', () => {
   if (!$('#edTrip').checked && g.trips && g.trips.length) g.trips = [];
   const lvType = $('#edLeavePaid').checked ? 'paid' : $('#edLeaveUnpaid').checked ? 'unpaid' : null;
   const prevLv = JSON.stringify(rec.leave || null);
-  rec.leave = lvType && !$('#edLeaveBox').hidden ? { type: lvType, part: dayType(key, settings.holidays).type === 'saturday' ? 'full' : $('#edLeavePart').value } : null;
-  if (JSON.stringify(rec.leave) !== prevLv) logEvent(rec, nowHM(), 'edit.leave.' + (rec.leave ? rec.leave.type + '.' + rec.leave.part : 'none'));
+  const pv = dayTypeOf(key, settings).type === 'saturday' ? 'full' : $('#edLeavePart').value;
+  rec.leave = lvType && !$('#edLeaveBox').hidden ? (pv[0] === 'h' ? { type: lvType, hours: +pv.slice(1) } : { type: lvType, part: pv }) : null;
+  if (JSON.stringify(rec.leave) !== prevLv) logEvent(rec, nowHM(), 'edit.leave.' + (rec.leave ? rec.leave.type + '.' + (rec.leave.hours ? 'hours' : rec.leave.part) : 'none'), rec.leave && rec.leave.hours ? { n: rec.leave.hours } : undefined);
+  const P = policyOf(settings);
+  if (!$('#edWfhBox').hidden) {
+    const w = $('#edWfh').checked;
+    if (!!rec.wfh !== w) logEvent(rec, nowHM(), w ? 'wfh.on' : 'wfh.off');
+    rec.wfh = w || undefined;
+  }
+  if (P.otApproval) {
+    const ap = Math.max(0, num($('#edOtApproved').value, 0));
+    if ((+rec.otApproved || 0) !== ap) logEvent(rec, nowHM(), 'ot.approved', { h: fmtNum(ap) });
+    rec.otApproved = ap || undefined;
+  }
   if (changed) logEvent(rec, nowHM(), 'edit', { in: vin || '—', out: vout || '—' });
   touch(key); closeEdit(); afterEdit(); toast(T('edit.saved', { d: fmtDM(key) }));
 });
@@ -664,6 +761,7 @@ function renderSettings() {
   $('#wRoundMin').value = w.roundMin; $('#wRoundMode').value = w.roundMode;
   const sel = $('#wStd'); if (![...sel.options].some(op => op.value === String(w.stdDaysMode))) sel.add(new Option(T('set.std.n', { n: w.stdDaysMode }), w.stdDaysMode)); sel.value = String(w.stdDaysMode);
   renderHolidays();
+  renderPolicy();
   renderContract();
   $('#autoCard').hidden = !NATIVE;
   $('#wTrackStart').value = w.trackStart; $('#wTrackEnd').value = w.trackEnd;
@@ -733,6 +831,139 @@ $('#holForm').addEventListener('submit', e => {
   settings.holidays.push({ date, name, kind: $('#holKind').value });
   saveSettings(); renderHolidays(); $('#holName').value = ''; toast(T('set.holAdded', { d: fmtDMY(date) }));
 });
+
+/* ---------- Company pay policy ---------- */
+const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
+let editItemId = null, applyArmed = false;
+function renderPolicy() {
+  const P = policyOf(settings), wd = workDaysOf(settings);
+  $('#polPreset').value = P.preset || 'custom';
+  $('#polApply').textContent = T('pol.apply'); applyArmed = false;
+  $('#polDays').innerHTML = DOW_ORDER.map(d => `<label class="check"><input type="checkbox" data-wd="${d}" ${wd.includes(d) ? 'checked' : ''}> ${esc(dowShort(d))}</label>`).join('');
+  $$('[data-wd]').forEach(x => x.onchange = () => readPolicy());
+  $('#polDayPay').value = P.dayPay; $('#polOtBasis').value = P.otBasis; $('#polLeavePay').value = P.leavePay;
+  $('#polLeaveUnit').value = String(+P.leaveUnitHours >= 4 ? 4 : 1);
+  $('#polOtApproval').checked = !!P.otApproval; $('#polWfh').checked = !!P.wfh; $('#polT13').checked = !!P.t13;
+  $('#polWfhCap').value = P.wfhCapPct || 0; $('#polWfhCapBox').hidden = !P.wfh;
+  const taxTxt = it => T('item.tax.' + (it.tax || 'taxable'));
+  const amtTxt = it => it.kind === 'performance' ? T('item.perfSub') : fmtVnd(+it.amount || 0);
+  $('#polItems').innerHTML = (P.items || []).length ? P.items.map(it => `<li><span data-edit-item="${esc(it.id)}" style="cursor:pointer;flex:1;min-width:0"><b>${esc(itemName(it))}</b> <span class="small">${esc(amtTxt(it))}</span><br><span class="small muted">${esc(T('item.kind.' + it.kind))}<br>${esc(taxTxt(it))} · ${esc(T(it.when === 'probation' ? 'ct.probation' : it.when === 'official' ? 'ct.official' : 'item.when.both'))}</span></span><button class="x-btn" data-del-item="${esc(it.id)}" aria-label="${esc(T('item.delete'))}">✕</button></li>`).join('')
+    : `<li class="empty small" style="display:block">${esc(T('item.empty'))}</li>`;
+  $$('[data-edit-item]').forEach(x => x.onclick = () => loadItem(x.dataset.editItem));
+  $$('[data-del-item]').forEach(x => x.onclick = () => {
+    settings.policy = { ...P, preset: 'custom', items: P.items.filter(i => i.id !== x.dataset.delItem) };
+    if (editItemId === x.dataset.delItem) clearItem();
+    afterPolicy(T('item.deleted'));
+  });
+  if (!editItemId) clearItem(); else syncItemForm();
+  const hasPerf = (P.items || []).some(i => i.kind === 'performance');
+  $('#polRatingsBox').hidden = !hasPerf;
+  $('#polRatings').innerHTML = (P.ratings || []).map((r, i) => `<div class="row rt-row" style="gap:8px;margin-bottom:6px;flex-wrap:nowrap">
+      <label class="check" title="${esc(T('pol.ratingDefault'))}"><input type="radio" name="rtDefault" data-rt-def="${i}" ${P.defaultRating === r.id ? 'checked' : ''}></label>
+      <input data-rt-name="${i}" value="${esc(r.name)}" style="flex:2;min-width:0">
+      <input data-rt-pct="${i}" value="${esc(fmtPct(r.pct))}" inputmode="decimal" style="flex:1;min-width:0;max-width:96px">
+      <span class="small muted">%</span><button class="x-btn" data-rt-del="${i}" aria-label="${esc(T('item.delete'))}">✕</button></div>`).join('');
+  $$('[data-rt-name],[data-rt-pct],[data-rt-def]').forEach(x => x.onchange = readRatings);
+  $$('[data-rt-del]').forEach(x => x.onclick = () => { const list = P.ratings.slice(); list.splice(+x.dataset.rtDel, 1); settings.policy = { ...P, ratings: list }; afterPolicy(); });
+  syncContractLabels();
+}
+const fmtPct = p => Number(p).toLocaleString(LOCALE(), { maximumFractionDigits: 2 });
+function readPolicy() {
+  const P = policyOf(settings);
+  const wd = $$('[data-wd]').filter(x => x.checked).map(x => +x.dataset.wd);
+  if (!wd.length) { toast(T('pol.needDay')); renderPolicy(); return; }
+  settings.work.workDays = wd.sort();
+  settings.policy = { ...P, preset: 'custom',
+    dayPay: $('#polDayPay').value, otBasis: $('#polOtBasis').value, leavePay: $('#polLeavePay').value,
+    leaveUnitHours: +$('#polLeaveUnit').value, otApproval: $('#polOtApproval').checked, wfh: $('#polWfh').checked,
+    t13: $('#polT13').checked, wfhCapPct: Math.min(100, Math.max(0, num($('#polWfhCap').value, 0))) };
+  afterPolicy(T('set.saved'));
+  startGps();
+}
+function readRatings() {
+  const P = policyOf(settings);
+  const list = P.ratings.map((r, i) => {
+    const pctIn = $(`[data-rt-pct="${i}"]`).value, same = pctIn === fmtPct(r.pct);
+    return { ...r, name: $(`[data-rt-name="${i}"]`).value.trim() || r.name, pct: same ? r.pct : Math.max(0, num(pctIn, r.pct)) };
+  });
+  const def = $$('[data-rt-def]').find(x => x.checked);
+  settings.policy = { ...P, ratings: list, defaultRating: def ? list[+def.dataset.rtDef].id : P.defaultRating };
+  afterPolicy(T('set.saved'));
+}
+$('#rtAdd').addEventListener('click', () => {
+  const P = policyOf(settings);
+  settings.policy = { ...P, ratings: [...(P.ratings || []), { id: 'r' + Date.now(), name: T('pol.ratingNew'), pct: 0 }] };
+  afterPolicy();
+});
+function afterPolicy(msg) { saveSettings(); renderPolicy(); renderMonthViews(); renderToday(); if (msg) toast(msg); }
+['#polDayPay', '#polOtBasis', '#polLeavePay', '#polLeaveUnit', '#polOtApproval', '#polWfh', '#polT13', '#polWfhCap']
+  .forEach(sel => $(sel).addEventListener('change', readPolicy));
+$('#polApply').addEventListener('click', () => {
+  const id = $('#polPreset').value, pre = POLICY_PRESETS[id];
+  if (!pre) { toast(T('pol.customHint')); return; }
+  if (!applyArmed) { applyArmed = true; $('#polApply').textContent = T('pol.applyConfirm'); return; }
+  settings.work = { ...settings.work, ...pre.work, workDays: pre.work.workDays.slice() };
+  settings.policy = pre.policy();
+  editItemId = null; saveSettings(); renderSettings(); renderMonthViews(); renderToday(); startGps();
+  toast(T('pol.applied'));
+});
+$('#polPreset').addEventListener('change', () => { applyArmed = false; $('#polApply').textContent = T('pol.apply'); });
+function clearItem() {
+  editItemId = null; $('#itName').value = ''; $('#itKind').value = 'perDay'; $('#itAmount').value = '';
+  $('#itWhen').value = 'both'; $('#itTax').value = 'taxable'; syncItemForm();
+}
+function loadItem(id) {
+  const it = (policyOf(settings).items || []).find(i => i.id === id); if (!it) return;
+  editItemId = id; $('#itName').value = itemName(it); $('#itKind').value = it.kind;
+  $('#itAmount').value = it.amount > 0 ? fmtNum(it.amount) : ''; $('#itWhen').value = it.when || 'both'; $('#itTax').value = it.tax || 'taxable';
+  syncItemForm(); $('#itName').focus(); toast(T('pay.editing'));
+}
+function syncItemForm() {
+  $('#itAmountBox').hidden = $('#itKind').value === 'performance';
+  $('#itSave').textContent = T(editItemId ? 'item.update' : 'item.save');
+}
+$('#itKind').addEventListener('change', syncItemForm);
+$('#itNew').addEventListener('click', clearItem);
+$('#itSave').addEventListener('click', () => {
+  const P = policyOf(settings), kind = $('#itKind').value, name = $('#itName').value.trim();
+  const amount = kind === 'performance' ? 0 : moneyVal('#itAmount');
+  if (!name) { toast(T('item.needName')); return; }
+  if (kind !== 'performance' && !amount) { toast(T('item.needAmount')); return; }
+  const items = (P.items || []).slice(), old = items.find(i => i.id === editItemId);
+  const it = { id: old ? old.id : 'i' + Date.now(), tpl: old && itemName(old) === name ? old.tpl : undefined,
+    name: old && old.tpl && itemName(old) === name ? '' : name, kind, amount, when: $('#itWhen').value, tax: $('#itTax').value };
+  if (old) items[items.indexOf(old)] = it; else items.push(it);
+  let ratings = P.ratings || [], def = P.defaultRating;
+  if (kind === 'performance' && !ratings.length) { ratings = POLICY_PRESETS.office.policy().ratings; def = 'solid'; }
+  settings.policy = { ...P, preset: 'custom', items, ratings, defaultRating: def };
+  editItemId = null; afterPolicy(T('item.saved'));
+});
+/* Share the rules (not salaries or timesheets) with colleagues */
+const POLICY_WORK_KEYS = ['workDays', 'lunchStart', 'lunchEnd', 'satStdHours', 'stdDaysMode', 'roundMin', 'roundMode', 'otBlockMin', 'congUnitMin'];
+$('#polExport').addEventListener('click', async () => {
+  const work = {}; POLICY_WORK_KEYS.forEach(k => work[k] = settings.work[k]);
+  const data = { type: 'olive-timekeeper-policy', version: 1, work, policy: policyOf(settings) };
+  await saveFile('olive-timekeeper-policy.json', new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+});
+$('#polImport').addEventListener('click', () => $('#polFile').click());
+$('#polFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    if (data.type !== 'olive-timekeeper-policy' || !data.policy) throw new Error('type');
+    const work = {}; POLICY_WORK_KEYS.forEach(k => { if (data.work && data.work[k] != null) work[k] = data.work[k]; });
+    settings.work = { ...settings.work, ...work };
+    settings.policy = { ...POLICY_PRESETS.gross.policy(), ...data.policy };
+    editItemId = null; saveSettings(); renderSettings(); renderMonthViews(); renderToday(); startGps();
+    toast(T('pol.imported'));
+  } catch (err) { toast(T('pol.importBad')); }
+});
+function syncContractLabels() {
+  const baseMode = policyOf(settings).dayPay === 'base';
+  $('#ctPGross').closest('label').hidden = baseMode; $('#ctOGross').closest('label').hidden = baseMode;
+  $('#ctPBase').closest('label').querySelector('span').textContent = T(baseMode ? 'ct.baseTitleProb' : 'ct.base');
+  $('#ctOBase').closest('label').querySelector('span').textContent = T(baseMode ? 'ct.baseTitle' : 'ct.baseIns');
+}
 
 /* ---------- Contract & salary ---------- */
 const moneyVal = sel => +($(sel).value || '').replace(/\D/g, '');
@@ -837,7 +1068,7 @@ $('#xlsxBtn').addEventListener('click', async () => {
       r.lunchMin || '', r.workedMin ? hdec(r.workedMin) : '', r.cong || '', r.paidCong || '', r.leave ? leaveText(r.leave) : '',
       r.ot150 ? hdec(r.ot150) : '', r.ot200 ? hdec(r.ot200) : '', r.ot300 ? hdec(r.ot300) : '',
       r.trip ? (r.trips.length ? r.trips.map(x => x.start + '-' + (x.end || '?')).join(', ') : T('month.yes')) : '',
-      r.basePay || '', r.otPay || '', r.total || '', r.note || '',
+      r.basePay + r.itemsPay || '', r.otPay || '', r.total || '', [r.wfh ? 'WFH' : '', r.otPending ? T('x.otPending', { h: fmtHdec(r.otPending) }) : '', r.note].filter(Boolean).join(' · '),
     ]));
     aoa.push([T('x.total'), '', '', '', '', '', '', '', '', '', hdec(t.workedMin), round2(t.cong), t.paidCong, T('x.leaveTotal', { p: fmtNum(t.paidLeave), u: fmtNum(t.unpaidLeave) }), hdec(t.ot150), hdec(t.ot200), hdec(t.ot300), T('x.unit.days', { n: t.tripDays }), t.basePay, t.otPay, t.total, '']);
     aoa.push([]);
@@ -847,6 +1078,7 @@ $('#xlsxBtn').addEventListener('click', async () => {
     aoa.push(line(T('x.line.work'), T('x.unit.workdays', { n: b.workCong }), b.workPay));
     aoa.push(line(T('x.line.paid'), T('x.unit.days', { n: b.paidCong }), b.paidPay));
     aoa.push(line(T('x.line.leave'), T('x.unit.days', { n: b.paidLeave }), b.leavePay));
+    b.items.forEach(i => aoa.push(line(itemName(i), itemDetail(i, M), i.amount)));
     aoa.push(line(T('x.line.ot150'), T('x.unit.hours', { n: hdec(t.ot150) }), b.ot150Pay));
     aoa.push(line(T('x.line.ot200'), T('x.unit.hours', { n: hdec(t.ot200) }), b.ot200Pay));
     aoa.push(line(T('x.line.ot300'), T('x.unit.hours', { n: hdec(t.ot300) }), b.ot300Pay));
@@ -875,7 +1107,7 @@ $('#pdfBtn').addEventListener('click', async () => {
     const stage = $('#pdfStage');
     const P = k => esc(T('pdf.col.' + k));
     const head = `<tr><th>${P('date')}</th><th>${P('dow')}</th><th>${P('type')}</th><th>${P('in')}</th><th>${P('out')}</th><th class="n">${P('lunch')}</th><th class="n">${P('worked')}</th><th class="n">${P('cong')}</th><th class="n">OT 150%</th><th class="n">OT 200%</th><th class="n">OT 300%</th><th>${P('trip')}</th><th class="n">${P('amount')}</th><th>${P('note')}</th></tr>`;
-    const row = r => `<tr><td>${esc(fmtDM(r.key))}</td><td>${esc(dowShort(r.dt.dow))}</td><td>${esc(dayLabel(r.dt))}</td><td>${r.inHM ? r.inHM + (r.inR && r.inR !== r.inHM ? ' → ' + r.inR : '') + (r.inSrc === 'gps' ? ' (GPS)' : '') : ''}</td><td>${r.outHM ? r.outHM + (r.outR && r.outR !== r.outHM ? ' → ' + r.outR : '') + (r.outSrc === 'gps' ? ' (GPS)' : '') : r.missingOut ? esc(T('pdf.missing')) : ''}</td><td class="n">${r.lunchMin || ''}</td><td class="n">${r.workedMin ? fmtH(r.workedMin) : ''}</td><td class="n">${(r.cong + r.paidCong + r.paidLeave) ? fmtNum(r.cong + r.paidCong + r.paidLeave) : ''}</td><td class="n">${r.ot150 ? fmtH(r.ot150) : ''}</td><td class="n">${r.ot200 ? fmtH(r.ot200) : ''}</td><td class="n">${r.ot300 ? fmtH(r.ot300) : ''}</td><td>${r.trip ? esc(tripText(r)) : ''}</td><td class="n">${r.total ? fmtNum(r.total) : ''}</td><td>${esc([r.leave ? leaveText(r.leave) : '', r.note].filter(Boolean).join(' · '))}</td></tr>`;
+    const row = r => `<tr><td>${esc(fmtDM(r.key))}</td><td>${esc(dowShort(r.dt.dow))}</td><td>${esc(dayLabel(r.dt))}</td><td>${r.inHM ? r.inHM + (r.inR && r.inR !== r.inHM ? ' → ' + r.inR : '') + (r.inSrc === 'gps' ? ' (GPS)' : '') : ''}</td><td>${r.outHM ? r.outHM + (r.outR && r.outR !== r.outHM ? ' → ' + r.outR : '') + (r.outSrc === 'gps' ? ' (GPS)' : '') : r.missingOut ? esc(T('pdf.missing')) : ''}</td><td class="n">${r.lunchMin || ''}</td><td class="n">${r.workedMin ? fmtH(r.workedMin) : ''}</td><td class="n">${(r.cong + r.paidCong + r.paidLeave) ? fmtNum(r.cong + r.paidCong + r.paidLeave) : ''}</td><td class="n">${r.ot150 ? fmtH(r.ot150) : ''}</td><td class="n">${r.ot200 ? fmtH(r.ot200) : ''}</td><td class="n">${r.ot300 ? fmtH(r.ot300) : ''}</td><td>${r.trip ? esc(tripText(r)) : ''}</td><td class="n">${r.total ? fmtNum(r.total) : ''}</td><td>${esc([r.wfh ? 'WFH' : '', r.leave ? leaveText(r.leave) : '', r.note].filter(Boolean).join(' · '))}</td></tr>`;
     const metaItem = (k, v) => `<span>${esc(T(k))}: <b>${esc(v)}</b></span>`;
     const meta = `<div class="meta">${metaItem('x.employee', settings.name || '—')}${metaItem('x.status', h.statusTxt)}${metaItem('x.salary', h.salaryTxt)}${metaItem('x.otBase', h.otBaseTxt)}${metaItem('x.std', M.std)}</div>`;
     const rows = M.rows, chunks = [rows.slice(0, 16), rows.slice(16)];
@@ -892,6 +1124,7 @@ $('#pdfBtn').addEventListener('click', async () => {
         ${sumRow(T('x.line.work'), T('x.unit.workdays', { n: fmtNum(b.workCong) }), b.workPay)}
         ${sumRow(T('x.line.paid'), T('x.unit.days', { n: b.paidCong }), b.paidPay)}
         ${sumRow(T('x.line.leave'), T('x.unit.days', { n: fmtNum(b.paidLeave) }), b.leavePay)}
+        ${b.items.map(i => `<tr><td>${esc(itemName(i))} <span style="color:var(--pdf-muted);font-size:10px">· ${esc(itemDetail(i, M))}</span></td><td></td><td class="n">${fmtNum(i.amount)}</td></tr>`).join('')}
         ${sumRow(T('x.line.ot150'), T('x.unit.hours', { n: fmtHdec(t.ot150) }), b.ot150Pay)}
         ${sumRow(T('x.line.ot200'), T('x.unit.hours', { n: fmtHdec(t.ot200) }), b.ot200Pay)}
         ${sumRow(T('x.line.ot300'), T('x.unit.hours', { n: fmtHdec(t.ot300) }), b.ot300Pay)}
@@ -949,7 +1182,8 @@ function mergeSettings(s) {
   if (work.roundRule !== 2) { work.roundMode = 'down'; work.roundRule = 2; } // company rule: round down
   const office = { ...d.office, ...(s.office || {}) };
   if (office.name === 'Văn phòng') office.name = ''; // old default name → shown as "the office" in each language
-  return { ...d, ...s, lang: s.lang || null, office, work, salaries: s.salaries || [], contract: contractOf(s), holidays: migrateHolidays(s.holidays || d.holidays) };
+  if (!Array.isArray(work.workDays) || !work.workDays.length) work.workDays = d.work.workDays.slice();
+  return { ...d, ...s, lang: s.lang || null, office, work, salaries: s.salaries || [], contract: contractOf(s), policy: policyOf(s), holidays: migrateHolidays(s.holidays || d.holidays) };
 }
 function renderAll() { renderToday(); renderMonthViews(); if (!$('#view-settings').hidden) renderSettings(); }
 function setStoreChip() {
