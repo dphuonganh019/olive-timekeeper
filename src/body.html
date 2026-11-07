@@ -126,12 +126,17 @@
           <label class="f"><span data-i18n="pol.otBasis">Overtime is based on</span><select id="polOtBasis"><option value="base" data-i18n="pol.basis.base">Base / title salary on the contract</option><option value="gross" data-i18n="pol.basis.gross">Gross monthly pay</option></select></label>
           <label class="f"><span data-i18n="pol.leavePay">Paid leave is based on</span><select id="polLeavePay"><option value="base" data-i18n="pol.basis.base">Base / title salary on the contract</option><option value="gross" data-i18n="pol.basis.gross">Gross monthly pay</option></select></label>
           <label class="f"><span data-i18n="pol.accrual">Annual leave is</span><select id="polAccrual"><option value="monthly" data-i18n="pol.accrual.monthly">Earned month by month (days ÷ 12 per month worked)</option><option value="annual" data-i18n="pol.accrual.annual">Granted in full at the start of the year</option></select></label>
+          <label class="f"><span data-i18n="pol.leaveFrom">Annual leave starts</span><select id="polLeaveFrom"><option value="official" data-i18n="pol.leaveFrom.official">From the permanent contract</option><option value="contract" data-i18n="pol.leaveFrom.contract">From the first day (probation included)</option></select></label>
           <label class="f"><span data-i18n="pol.leaveUnit">Smallest unit of leave</span><select id="polLeaveUnit"><option value="4" data-i18n="pol.leaveUnit.4">Half a day</option><option value="1" data-i18n="pol.leaveUnit.1">1 hour</option></select></label>
         </div>
         <div class="row" style="flex-wrap:wrap;gap:10px 22px;margin-top:14px">
           <label class="check"><input type="checkbox" id="polOtApproval"> <span data-i18n="pol.otApproval">Overtime is paid only when approved</span></label>
           <label class="check"><input type="checkbox" id="polWfh"> <span data-i18n="pol.wfh">Work from home allowed</span></label>
           <label class="check"><input type="checkbox" id="polT13"> <span data-i18n="pol.t13">Count days for the 13th-month salary</span></label>
+          <label class="check"><input type="checkbox" id="polHoliday"> <span data-i18n="pol.holiday">Holidays count as full workdays for allowances and performance</span></label>
+        </div>
+        <div class="fields" style="margin-top:12px" id="polT13BasisBox">
+          <label class="f"><span data-i18n="pol.t13Basis">13th-month salary = this salary × days counted ÷ standard workdays of the year</span><select id="polT13Basis"><option value="base" data-i18n="pol.basis.base">Base / title salary on the contract</option><option value="gross" data-i18n="pol.basis.gross">Gross monthly pay</option></select></label>
         </div>
         <div class="fields" style="margin-top:12px" id="polWfhCapBox">
           <label class="f"><span data-i18n="pol.wfhCap">WFH limit (% of standard workdays, 0 = none)</span><input type="number" min="0" max="100" step="1" id="polWfhCap"></label>

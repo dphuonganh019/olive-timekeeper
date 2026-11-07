@@ -8,8 +8,8 @@ const ctx = {};
 vm.createContext(ctx);
 const src = f => readFileSync(new URL('../src/' + f, import.meta.url), 'utf8');
 vm.runInContext(src('core.js') + '\n' + src('i18n.js') +
-  ';this.X={computeDay,computeMonth,contractOf,progressiveTax,leaveUsed,POLICY_PRESETS,stdDays,periodOf,payMonthOf,gpsStep,geofenceReplay,DEFAULT_SETTINGS,settleLeave,leaveFinalMin,migrateHolidays,dayType,I18N,T,setLang,eventText,signalText,holidayName,dayLabel};', ctx);
-const { computeDay, computeMonth, contractOf, progressiveTax, leaveUsed, POLICY_PRESETS, stdDays, periodOf, payMonthOf, geofenceReplay, DEFAULT_SETTINGS, settleLeave, leaveFinalMin } = ctx.X;
+  ';this.X={computeDay,computeMonth,contractOf,progressiveTax,leaveUsed,POLICY_PRESETS,stdDays,periodOf,payMonthOf,t13For,gpsStep,geofenceReplay,DEFAULT_SETTINGS,settleLeave,leaveFinalMin,migrateHolidays,dayType,I18N,T,setLang,eventText,signalText,holidayName,dayLabel};', ctx);
+const { computeDay, computeMonth, contractOf, progressiveTax, leaveUsed, POLICY_PRESETS, stdDays, periodOf, payMonthOf, t13For, geofenceReplay, DEFAULT_SETTINGS, settleLeave, leaveFinalMin } = ctx.X;
 const S = DEFAULT_SETTINGS();
 const day = (i, o, key = '2026-10-06') => computeDay(key, { manualIn: i, manualOut: o }, S);
 const at = (d, h, m) => new Date(2026, 9, d, h, m).getTime();
@@ -391,6 +391,35 @@ test('annual leave accrues monthly from the contract start (preset 1)', () => {
   assert.equal(u.accrued, 1);                                                // slip: "Ngày phép tồn 1"
   assert.equal(leaveUsed(2026, () => ({}), HUNG(), '2026-12-31').accrued, 3);
   assert.equal(leaveUsed(2026, () => ({}), office(OFF), '2026-10-31').accrued, 12); // preset 2: the year's quota
+});
+
+test('preset 2: a paid holiday counts as a full day for performance and allowances (not lunch)', () => {
+  const M = computeMonth(2026, 12, {}, office({ official: { from: '2026-11-01', base: 19658063 } }));  // 24 Nov holiday
+  assert.equal(M.totals.paidCong, 1);
+  assert.equal(item(M, 'perf'), Math.round(19658063 / 3 / 22));
+  assert.equal(item(M, 'living'), 20000);
+  assert.equal(item(M, 'beauty'), Math.round(300000 / 22));
+  assert.equal(item(M, 'lunch'), 0);
+  const P1 = computeMonth(2026, 9, {}, HUNG());                                  // preset 1 keeps items off holidays
+  assert.equal(P1.totals.itemsPay, 0);
+});
+
+test('preset 1: annual leave starts with the permanent contract', () => {
+  const s = HUNG();
+  assert.equal(leaveUsed(2026, () => ({}), s, '2026-10-27').accrued, 0);         // still on probation
+  assert.equal(leaveUsed(2026, () => ({}), s, '2026-10-31').accrued, 1);         // permanent from 28 Oct
+  assert.equal(leaveUsed(2027, () => ({}), s, '2027-03-31').accrued, 3);
+});
+
+test('13th-month salary: basis × days counted (probation, WFH, leave, holidays) ÷ the year\'s standard workdays', () => {
+  const s = { ...office({ probation: { from: '2026-01-01', to: '2026-02-28', base: 16709354 }, official: { from: '2026-03-01', base: 19658063 } }),
+    holidays: [] };
+  s.work = { ...s.work, stdDaysMode: '21' };
+  const days = { 3: { '2026-03-02': { manualIn: '08:30', manualOut: '17:30', wfh: true } }, 2: { '2026-02-02': { leave: { type: 'paid', hours: 8 } } } };
+  const r = t13For(2026, m => days[m] || {}, s);
+  assert.equal(r.std, 252); assert.equal(r.days, 2);
+  assert.equal(r.basis, 19658063);
+  assert.equal(r.amount, Math.round(19658063 * 2 / 252));
 });
 
 function replay(events, manualIn) {

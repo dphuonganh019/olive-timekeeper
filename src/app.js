@@ -625,6 +625,7 @@ const loadedYears = new Set();
 async function ensureYear(y) {
   if (loadedYears.has(y)) return false;
   for (let m = 1; m <= 12; m++) await ensureMonth(y, m);
+  await ensureMonth(y - 1, 12);   // the first pay period may start in December
   loadedYears.add(y); return true;
 }
 function renderLeaveCard(M) {
@@ -635,23 +636,17 @@ function renderLeaveCard(M) {
       <div class="stat"><div class="k">${esc(T(u.monthly ? 'lv.usedAccrued' : 'lv.used', { y: view.y, d: fmtDM(M.period.to) }))}</div><div class="v">${fmtNum(u.used)} / ${fmtNum(u.accrued)}</div></div>
       <div class="stat ${u.left < 0 ? 'r300' : 'r200'}"><div class="k">${esc(T('lv.left'))}</div><div class="v">${fmtNum(u.left)}</div></div>
       <div class="stat"><div class="k">${esc(T('lv.month'))}</div><div class="v">${fmtNum(t.paidLeave)} · ${fmtNum(t.unpaidLeave)}</div></div>
-      ${M.policy.t13 ? `<div class="stat"><div class="k">${esc(T('lv.t13', { y: view.y }))}</div><div class="v">${fmtNum(round2(yearT13(view.y)))}</div></div>` : ''}
+      ${M.policy.t13 ? (() => { const r = yearT13(view.y); return `<div class="stat"><div class="k">${esc(T('lv.t13', { y: view.y }))}</div><div class="v">${fmtNum(round2(r.days))} / ${r.std}</div></div>
+      <div class="stat r200"><div class="k">${esc(T('lv.t13Amount'))}</div><div class="v num" style="font-size:1rem">${fmtVnd(r.amount)}</div></div>`; })() : ''}
       ${M.policy.wfh ? `<div class="stat ${t.wfhCap != null && t.wfhDays > t.wfhCap ? 'r300' : ''}"><div class="k">${esc(T('lv.wfh'))}</div><div class="v">${t.wfhDays}${t.wfhCap != null ? ' / ' + t.wfhCap : ''}</div></div>` : ''}
     </div>
     ${u.left < 0 ? `<div class="notice" style="margin-top:10px">${esc(T('lv.over', { n: fmtNum(-u.left) }))}</div>` : ''}
+    ${M.policy.t13 ? `<p class="small muted" style="margin-bottom:0">${esc(T('lv.t13Hint', { basis: T(M.policy.t13Basis === 'gross' ? 'lv.t13.gross' : 'lv.t13.base') }))}</p>` : ''}
     <p class="small muted" style="margin-bottom:0">${esc(T('lv.hint'))}</p>`;
   ensureYear(view.y).then(loaded => { if (loaded && !$('#view-pay').hidden) renderLeaveCard(curMonthCalc()); });
 }
 /* Days counted for the 13th-month salary this year (workdays, paid holidays, paid leave) */
-function yearT13(y) {
-  let n = 0;
-  for (let m = 1; m <= 12; m++) {
-    const mo = months[monthKey(y, m)]; if (!mo) continue;
-    const cal = { ...settings, policy: { ...policyOf(settings), periodStart: 1 } };   // calendar months
-    n += computeMonth(y, m, mo.days, cal, null, mo).totals.t13Cong;
-  }
-  return n;
-}
+function yearT13(y) { return t13For(y, m => periodDays(y, m), settings); }
 function renderContractSummary(M) {
   const C = M.contract;
   const baseMode = M.policy.dayPay === 'base';
@@ -865,6 +860,9 @@ function renderPolicy() {
   $('#polDayPay').value = P.dayPay; $('#polOtBasis').value = P.otBasis; $('#polLeavePay').value = P.leavePay;
   $('#polLeaveUnit').value = String(+P.leaveUnitHours >= 4 ? 4 : 1);
   $('#polAccrual').value = P.leaveAccrual === 'monthly' ? 'monthly' : 'annual';
+  $('#polLeaveFrom').value = P.leaveFrom === 'official' ? 'official' : 'contract';
+  $('#polT13Basis').value = P.t13Basis === 'gross' ? 'gross' : 'base'; $('#polT13BasisBox').hidden = !P.t13;
+  $('#polHoliday').checked = !!P.holidayAsWork;
   $('#polOtApproval').checked = !!P.otApproval; $('#polWfh').checked = !!P.wfh; $('#polT13').checked = !!P.t13;
   $('#polWfhCap').value = P.wfhCapPct || 0; $('#polWfhCapBox').hidden = !P.wfh;
   const taxTxt = it => T('item.tax.' + (it.tax || 'taxable'));
@@ -899,7 +897,8 @@ function readPolicy() {
   const periodChanged = periodStart !== (+P.periodStart || 1);
   settings.policy = { ...P, preset: 'custom', periodStart,
     dayPay: $('#polDayPay').value, otBasis: $('#polOtBasis').value, leavePay: $('#polLeavePay').value,
-    leaveUnitHours: +$('#polLeaveUnit').value, leaveAccrual: $('#polAccrual').value, otApproval: $('#polOtApproval').checked, wfh: $('#polWfh').checked,
+    leaveUnitHours: +$('#polLeaveUnit').value, leaveAccrual: $('#polAccrual').value, leaveFrom: $('#polLeaveFrom').value,
+    t13Basis: $('#polT13Basis').value, holidayAsWork: $('#polHoliday').checked, otApproval: $('#polOtApproval').checked, wfh: $('#polWfh').checked,
     t13: $('#polT13').checked, wfhCapPct: Math.min(100, Math.max(0, num($('#polWfhCap').value, 0))) };
   if (periodChanged) { viewToday().then(() => afterPolicy(T('set.saved'))); } else afterPolicy(T('set.saved'));
   startGps();
@@ -920,7 +919,7 @@ $('#rtAdd').addEventListener('click', () => {
   afterPolicy();
 });
 function afterPolicy(msg) { saveSettings(); renderPolicy(); renderMonthViews(); renderToday(); if (msg) toast(msg); }
-['#polPeriod', '#polAccrual', '#polDayPay', '#polOtBasis', '#polLeavePay', '#polLeaveUnit', '#polOtApproval', '#polWfh', '#polT13', '#polWfhCap']
+['#polPeriod', '#polAccrual', '#polLeaveFrom', '#polT13Basis', '#polHoliday', '#polDayPay', '#polOtBasis', '#polLeavePay', '#polLeaveUnit', '#polOtApproval', '#polWfh', '#polT13', '#polWfhCap']
   .forEach(sel => $(sel).addEventListener('change', readPolicy));
 $('#polApply').addEventListener('click', () => {
   const id = $('#polPreset').value, pre = POLICY_PRESETS[id];

@@ -72,14 +72,15 @@ const POLICY_PRESETS = {
     work: { workDays: [1, 2, 3, 4, 5, 6], satStdHours: 4, lunchStart: '12:00', lunchEnd: '13:00', stdDaysMode: '26' },
     policy: () => ({
       preset: 'gross', periodStart: 1, dayPay: 'gross', otBasis: 'base', leavePay: 'base', otApproval: false, leaveUnitHours: 4,
-      wfh: false, wfhCapPct: 0, t13: false, leaveAccrual: 'monthly', items: [], ratings: [], defaultRating: '',
+      wfh: false, wfhCapPct: 0, t13: false, t13Basis: 'base', leaveAccrual: 'monthly', leaveFrom: 'official', holidayAsWork: false,
+      items: [], ratings: [], defaultRating: '',
     }),
   },
   office: {
     work: { workDays: [1, 2, 3, 4, 5], lunchStart: '11:45', lunchEnd: '12:45', stdDaysMode: 'auto' },
     policy: () => ({
       preset: 'office', periodStart: 24, dayPay: 'base', otBasis: 'base', leavePay: 'base', otApproval: true, leaveUnitHours: 1,
-      wfh: true, wfhCapPct: 30, t13: true, leaveAccrual: 'annual',
+      wfh: true, wfhCapPct: 30, t13: true, t13Basis: 'base', leaveAccrual: 'annual', leaveFrom: 'contract', holidayAsWork: true,
       items: [
         { id: 'perf', tpl: 'perf', name: '', kind: 'performance', amount: 0, when: 'both', tax: 'taxable' },
         { id: 'living', tpl: 'living', name: '', kind: 'perDay', amount: 20000, when: 'both', tax: 'taxable' },
@@ -407,15 +408,16 @@ function stdDays(y, m, settings) {
 
 const itemApplies = (it, sal) => sal && (it.when === 'both' || !it.when || it.when === sal.status);
 /* Amount of one pay item for one day (unrounded). rate: the month's performance %. */
-function itemAmount(it, r, sal, std, rate) {
+function itemAmount(it, r, sal, std, rate, P) {
   if (!itemApplies(it, sal)) return 0;
   const amt = +it.amount || 0;
+  const c = r.cong + (P && P.holidayAsWork ? r.paidCong : 0);   // paid holidays count as days worked when the policy says so
   switch (it.kind) {
-    case 'perDay': return amt * r.cong;
+    case 'perDay': return amt * c;
     case 'lunchDay': return r.cong > 0 && r.spansLunch ? amt : 0;
-    case 'byDays': return amt * r.cong / std;
+    case 'byDays': return amt * c / std;
     case 'fixed': return r.dt.work ? amt / std : 0;
-    case 'performance': return sal.base * (rate || 0) / 100 * r.cong / std;
+    case 'performance': return sal.base * (rate || 0) / 100 * c / std;
     default: return 0;
   }
 }
@@ -463,7 +465,7 @@ function computeMonth(y, m, days, settings, now, month) {
     r.items = {}; r.taxableRaw = 0; r.mealRaw = 0;
     let itemsDay = 0;
     for (const it of items) {
-      const v = itemAmount(it, r, sal, std, rating ? rating.pct : 0);
+      const v = itemAmount(it, r, sal, std, rating ? rating.pct : 0, P);
       if (!v) continue;
       r.items[it.id] = v; it.raw += v; itemsDay += v;
       if (it.tax === 'meal') r.mealRaw += v; else if (it.tax !== 'exempt') r.taxableRaw += v;
@@ -506,6 +508,21 @@ function computeMonth(y, m, days, settings, now, month) {
   return { y, m, std, period, rows, totals: t, contract: C, policy: P, rating, deductions: deductionsFor(y, m, rows, t, C) };
 }
 
+/* 13th-month salary estimate: basis salary × days counted (workdays incl. WFH, paid holidays, paid leave, probation
+   included) ÷ the standard workdays of the year's 12 pay periods. monthDays(m) = the days covering pay month m. */
+function t13For(y, monthDays, settings) {
+  let days = 0, std = 0;
+  const cal = settings;
+  for (let m = 1; m <= 12; m++) {
+    std += stdDays(y, m, cal);
+    days += computeMonth(y, m, monthDays(m) || {}, cal).totals.t13Cong;
+  }
+  const C = contractOf(settings), P = policyOf(settings);
+  const p = C.official.from && (C.official.gross > 0 || C.official.base > 0) ? C.official : C.probation;
+  const basis = P.t13Basis === 'gross' ? (p.gross > 0 ? p.gross : p.base) : (p.base > 0 ? p.base : p.gross);
+  return { days: Math.round(days * 1000) / 1000, std, basis: basis || 0, amount: std ? Math.round((basis || 0) * days / std) : 0 };
+}
+
 /* Annual leave used in a year. monthDays(m) returns that month's {key: rec}. */
 function leaveUsed(y, monthDays, settings, asOf) {
   let used = 0;
@@ -520,14 +537,16 @@ function leaveUsed(y, monthDays, settings, asOf) {
   }
   const C = contractOf(settings), quota = Math.max(0, +C.leaveDaysPerYear || 0);
   let accrued = quota;
-  // Monthly accrual: quota ÷ 12 for each full month worked in the year, counted from the contract start up to asOf
-  if (policyOf(settings).leaveAccrual === 'monthly' && asOf) {
-    const start0 = C.probation.from || C.official.from;
-    if (start0) {
+  // Monthly accrual: quota ÷ 12 for each month of the year from the leave start month (included) up to asOf.
+  // Leave starts with the permanent contract (preset 1) or with the first contract.
+  const P = policyOf(settings);
+  if (P.leaveAccrual === 'monthly' && asOf) {
+    const start0 = P.leaveFrom === 'official' ? C.official.from : (C.probation.from || C.official.from);
+    if (start0 && start0 <= asOf) {
       const start = start0 < y + '-01-01' ? y + '-01-01' : start0;
-      const end = addDays(asOf < y + '-12-31' ? asOf : y + '-12-31', 1);
-      const [sy, sm, sd] = start.split('-').map(Number), [ey, em, ed] = end.split('-').map(Number);
-      const months = end <= start ? 0 : Math.max(0, (ey - sy) * 12 + (em - sm) - (ed < sd ? 1 : 0));
+      const end = asOf < y + '-12-31' ? asOf : y + '-12-31';
+      const [sy, sm] = start.split('-').map(Number), [ey, em] = end.split('-').map(Number);
+      const months = end < start ? 0 : (ey - sy) * 12 + (em - sm) + 1;
       accrued = Math.min(quota, Math.round(months * quota / 12 * 100) / 100);
     } else accrued = 0;
   }

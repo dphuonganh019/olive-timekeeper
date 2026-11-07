@@ -131,7 +131,9 @@ All calculations use check-in/out times rounded down to 15-minute blocks. Workda
 | BR-32 | Leave can be entered by half day (preset 1) or by whole hours (preset 2, 1–7 h or the whole day) | 2 h leave + 10:30–17:30 worked → 0.25 leave + 0.75 workday |
 | BR-33 | Pay period: the calendar month (start day 1, preset 1) or, with start day S (1–28), from day S of the previous month to day S−1, named after the month it ends in. Standard workdays, pay, allowances, insurance and tax are calculated per period; annual leave and the 13th-month days per calendar year | Start 24 → "November 2026" = 24 Oct – 23 Nov, 21 standard workdays |
 | BR-34 | Night work 22:00–06:00 (Labour Code 2019 Art. 106): overtime in night hours is paid 200% on a workday, 270% on a rest day, 390% on a holiday (Decree 145/2020 Art. 57); normal hours at night earn +30%. Night hours count as overtime first; all of it is tax-free overtime pay. Not applied when overtime needs approval | 08:00–23:00 on a weekday → 5 h at 150% + 1 h at 200% |
-| BR-35 | Annual leave can be earned month by month: leave days per year ÷ 12 for each full month from the contract start (preset 1), or granted in full (preset 2) | Start 28 Sep, end of October → 1 day |
+| BR-35 | Annual leave can be earned month by month: leave days per year ÷ 12 for each month from the leave start month (included), the leave starting with the permanent contract (preset 1) or the first contract; or granted in full (preset 2) | Permanent from 28 Oct → 1 day at the end of October; 0 while on probation |
+| BR-37 | Paid holidays can count as full workdays for pay items (per day, prorated, performance; not the lunch allowance) — preset 2 | Holiday 24 Nov → performance and living allowance for 1 day |
+| BR-38 | 13th-month salary estimate = basis (base/title salary or gross, of the permanent contract if any) × days counted (workdays incl. WFH, paid holidays, paid leave, probation included) ÷ the standard workdays of the year's 12 pay periods | 19,658,063 × 6 ÷ 261 = 451,909 |
 | BR-36 | A month split between probation and permanent also shows the gross of each part, as on the two payslips | October 2026: 11,478,365 + 2,069,712 |
 | BR-14 | A past day without a check-out, or with a check-out not after the check-in, earns no workday and is flagged ⚠ | In 08:10, no out → 0 workdays |
 | BR-15 | Today without a check-out is counted up to the current time | — |
@@ -596,7 +598,7 @@ Automatic check-in has not yet been tested on a real phone, and some business ru
 | Q-11 | Should the probation 10% include overtime pay? | No; overtime is tax-exempt income |
 | Q-12 | Are allowances part of the gross pay? | Preset 1: yes, all gross pay except overtime is taxable; other policies list them as pay items (BR-27, BR-28) |
 | Q-13 | Union fee (1% of the insurance salary) | Not deducted |
-| Q-14 | Preset 2: are performance pay and allowances paid on public holidays? | No; holidays are paid at the title-salary day rate only |
-| Q-15 | Preset 2: is the grooming allowance and the probation insurance payment prorated by workdays? | Yes, monthly amount × workdays ÷ standard |
-| Q-16 | Preset 2: standard workdays = the Mon–Fri days of each month, or always 21? | Mon–Fri days of the month (21 can be fixed in Settings) |
-| Q-17 | How is the 13th-month salary amount calculated? | Only the days are counted |
+| Q-14 | Preset 2: are performance pay and allowances paid on public holidays? | Yes, in full (confirmed); the lunch allowance only for days worked |
+| Q-15 | Preset 2: is the grooming allowance and the probation insurance payment prorated by workdays? | Yes (confirmed); grooming only when permanent |
+| Q-16 | Preset 2: standard workdays? | The Mon–Fri days of each 24th–23rd pay period (confirmed) |
+| Q-17 | How is the 13th-month salary calculated? | Prorated by days counted, probation included (confirmed, BR-38); basis assumed to be the title salary |
