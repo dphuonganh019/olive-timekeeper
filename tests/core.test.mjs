@@ -332,6 +332,67 @@ test('preset 1 keeps its rules when nothing is configured', () => {
   assert.equal(computeDay('2026-10-10', { manualIn: '08:00', manualOut: '12:00' }, old).cong, 1); // Saturday 4 h = 1
 });
 
+/* ===== Real payslip, October 2026 (preset 1): probation until 27 Oct, permanent from 28 Oct =====
+   Contract: base 6,500,000 + responsibility 500,000 (both the OT basis: 7,000,000 ÷ 208 h = 33,653.85/h),
+   gross 13,000,000 (probation) / 14,000,000 (permanent), 26 standard workdays (208 h). */
+const HUNG = () => {
+  const d = DEFAULT_SETTINGS();
+  return { ...d, work: { ...d.work, stdDaysMode: '26' }, contract: { ...d.contract,
+    probation: { from: '2026-09-28', to: '2026-10-27', base: 7000000, gross: 13000000 },
+    official: { from: '2026-10-28', base: 7000000, gross: 14000000 }, probationTax: 'progressive' } };
+};
+const hungOctober = () => {
+  const days = {}, k = d => '2026-10-' + String(d).padStart(2, '0');
+  // Probation: 20 full workdays + one half day = 20.5 (164 h); 23 h OT 150% and 1 h night OT 200%
+  const work = [1, 2, 3, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23];
+  work.forEach(d => { days[k(d)] = new Date(2026, 9, d).getDay() === 6 ? { manualIn: '08:00', manualOut: '12:00' } : { manualIn: '08:00', manualOut: '17:00' }; });
+  days[k(24)] = { manualIn: '08:00', manualOut: '12:00' };                  // Saturday = 1 workday… use a weekday half day instead
+  days[k(24)] = undefined; days[k(26)] = { manualIn: '08:00', manualOut: '12:00' };       // Monday half day = 0.5
+  days[k(1)] = { manualIn: '08:00', manualOut: '23:00' };                   // 5 h OT 150% + 1 h night OT 200%
+  [2, 5, 6, 7, 8, 9, 12, 13, 14].forEach(d => days[k(d)].manualOut = '19:00'); // 9 × 2 h = 18 h OT 150%
+  // Permanent: 28–30 Oct, 3 workdays (24 h) with 3 h OT each
+  [28, 29, 30].forEach(d => days[k(d)] = { manualIn: '08:00', manualOut: '20:00' });
+  return days;
+};
+
+test('payslip October 2026 (preset 1): probation and permanent parts match line by line', () => {
+  const M = computeMonth(2026, 10, hungOctober(), HUNG());
+  const prob = M.rows.filter(r => r.salary && r.salary.status === 'probation');
+  const off = M.rows.filter(r => r.salary && r.salary.status === 'official');
+  const sum = (rows, f) => rows.reduce((a, r) => a + f(r), 0);
+  assert.equal(M.std, 26);
+  assert.equal(sum(prob, r => r.cong), 20.5);                                // "Giờ thường 164"
+  assert.equal(sum(prob, r => r.ot150) / 60, 23);                            // "Làm thêm ca ngày (150%) 23"
+  assert.equal(sum(prob, r => r.otn200) / 60, 1);                            // "Làm thêm ca đêm (200%) 1"
+  assert.equal(Math.round(sum(prob, r => r.ot150 / 60 * 1.5 * r.hourly)), 1161058);
+  assert.equal(Math.round(sum(prob, r => r.otn200 / 60 * 2 * r.hourly)), 67308);
+  assert.equal(Math.round(sum(prob, r => r.cong * r.daily)), 10250000);    // 5,125,000 + allowances 5,125,002 on the slip
+  assert.equal(M.totals.byStatus.probation, 11478365);                       // slip: 11,478,368 (the slip rounds each of 9 lines)
+  assert.equal(sum(off, r => r.cong), 3);                                    // "Giờ thường 24"
+  assert.equal(Math.round(sum(off, r => r.ot150 / 60 * 1.5 * r.hourly)), 454327);
+  assert.equal(M.totals.byStatus.official, 2069712);                         // slip: 2,069,712
+  assert.equal(M.deductions.insurance.due, false);                           // permanent for only 4 days: no insurance
+  assert.equal(M.deductions.pit, 0);                                         // slip: no tax
+  assert.equal(M.totals.total, 13548078);
+});
+
+test('night overtime: 270% on a rest day, 390% on a holiday, +30% for normal hours at night', () => {
+  const s = DEFAULT_SETTINGS();
+  const sun = computeDay('2026-10-11', { manualIn: '18:00', manualOut: '23:30' }, s);
+  assert.equal(sun.ot200, 240); assert.equal(sun.otn270, 90);
+  const hol = computeDay('2026-09-02', { manualIn: '20:00', manualOut: '23:00' }, s);
+  assert.equal(hol.ot300, 120); assert.equal(hol.otn390, 60);
+  const early = computeDay('2026-10-06', { manualIn: '04:00', manualOut: '13:00' }, s); // 8 h, 2 h before 06:00
+  assert.equal(early.ot150, 0); assert.equal(early.nightMin, 120);
+});
+
+test('annual leave accrues monthly from the contract start (preset 1)', () => {
+  const u = leaveUsed(2026, () => ({}), HUNG(), '2026-10-31');
+  assert.equal(u.accrued, 1);                                                // slip: "Ngày phép tồn 1"
+  assert.equal(leaveUsed(2026, () => ({}), HUNG(), '2026-12-31').accrued, 3);
+  assert.equal(leaveUsed(2026, () => ({}), office(OFF), '2026-10-31').accrued, 12); // preset 2: the year's quota
+});
+
 function replay(events, manualIn) {
   const days = { '2026-10-06': manualIn ? { manualIn } : {} }, rt = {};
   const evs = geofenceReplay(events, rt, k => (days[k] = days[k] || {}), S);

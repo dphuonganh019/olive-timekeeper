@@ -310,6 +310,17 @@ const I18N = {
   'pay.line.ot150': ['OT 150%', 'OT 150%'],
   'pay.line.ot200': ['Sunday / comp. day 200%', 'Chủ nhật / nghỉ bù 200%'],
   'pay.line.ot300': ['Public holiday 300%', 'Ngày lễ 300%'],
+  'pay.line.otn200': ['Night OT 200%', 'OT đêm 200%'],
+  'pay.line.otn270': ['Night OT on a day off 270%', 'OT đêm ngày nghỉ 270%'],
+  'pay.line.otn390': ['Night OT on a holiday 390%', 'OT đêm ngày lễ 390%'],
+  'pay.line.night': ['Night work +30%', 'Làm ca đêm +30%'],
+  'pay.line.byStatus': ['Probation payslip {p} · permanent payslip {o}', 'Phiếu thử việc {p} · phiếu chính thức {o}'],
+  'note.otn': ['night OT {h} h ({pct}%)', 'OT đêm {h}h ({pct}%)'],
+  'note.night': ['night work {h} h (+30%)', 'làm đêm {h}h (+30%)'],
+  'lv.usedAccrued': ['Annual leave used / earned to {d}', 'Phép năm đã dùng / tích lũy đến {d}'],
+  'pol.accrual': ['Annual leave is', 'Phép năm'],
+  'pol.accrual.monthly': ['Earned month by month (days ÷ 12 per month worked)', 'Tích lũy theo tháng (số ngày ÷ 12 mỗi tháng làm việc)'],
+  'pol.accrual.annual': ['Granted in full at the start of the year', 'Cấp đủ từ đầu năm'],
   'pay.hours': ['{h} h', '{h} giờ'],
 
   /* Edit day */

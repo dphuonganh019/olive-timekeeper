@@ -130,6 +130,9 @@ All calculations use check-in/out times rounded down to 15-minute blocks. Workda
 | BR-31 | Days for the 13th-month salary = workdays + paid holidays + paid leave under a contract, summed over the calendar year | — |
 | BR-32 | Leave can be entered by half day (preset 1) or by whole hours (preset 2, 1–7 h or the whole day) | 2 h leave + 10:30–17:30 worked → 0.25 leave + 0.75 workday |
 | BR-33 | Pay period: the calendar month (start day 1, preset 1) or, with start day S (1–28), from day S of the previous month to day S−1, named after the month it ends in. Standard workdays, pay, allowances, insurance and tax are calculated per period; annual leave and the 13th-month days per calendar year | Start 24 → "November 2026" = 24 Oct – 23 Nov, 21 standard workdays |
+| BR-34 | Night work 22:00–06:00 (Labour Code 2019 Art. 106): overtime in night hours is paid 200% on a workday, 270% on a rest day, 390% on a holiday (Decree 145/2020 Art. 57); normal hours at night earn +30%. Night hours count as overtime first; all of it is tax-free overtime pay. Not applied when overtime needs approval | 08:00–23:00 on a weekday → 5 h at 150% + 1 h at 200% |
+| BR-35 | Annual leave can be earned month by month: leave days per year ÷ 12 for each full month from the contract start (preset 1), or granted in full (preset 2) | Start 28 Sep, end of October → 1 day |
+| BR-36 | A month split between probation and permanent also shows the gross of each part, as on the two payslips | October 2026: 11,478,365 + 2,069,712 |
 | BR-14 | A past day without a check-out, or with a check-out not after the check-in, earns no workday and is flagged ⚠ | In 08:10, no out → 0 workdays |
 | BR-15 | Today without a check-out is counted up to the current time | — |
 | BR-16 | Leaving the office before the cutoff, not on a business trip, and not returning: the departure time becomes a provisional check-out | Morning shift 07:58–12:02 → 0.5 workday |
@@ -512,6 +515,8 @@ As an employee, I want to describe how my own company counts workdays and pays a
 - AC-28.6: "Export policy file" saves the workdays, lunch break, rounding, standard workdays and the policy (no salary or timesheet); "Import policy file" applies such a file, or shows "This is not an Olive Timekeeper policy file".
 - AC-28.7: With WFH allowed, the Today card shows "Working from home today" on workdays; WFH days get a WFH pill in the timesheet, a WFH tile, a count on the Pay tab and "WFH" in the exported notes.
 - AC-28.8: Data saved before policies existed opens with preset 1 and gives exactly the same results.
+
+Check against real payslips (preset 1, October 2026): base 6,500,000 + responsibility allowance 500,000 entered as the base salary (7,000,000 = OT basis, 33,653.85/hour over 208 h), gross 13,000,000 / 14,000,000, 26 standard workdays, probation tax progressive. Probation 20.5 workdays (164 h), 23 h OT 150%, 1 h night OT 200% → 11,478,365 (slip 11,478,368, each line rounded); permanent 3 workdays (24 h), 9 h OT 150% → 2,069,712 (slip 2,069,712); no insurance (permanent for under 14 days); no tax; leave earned 1.
 
 Example for preset 2 (permanent, August 2026, 21 standard workdays, every weekday 08:30–17:30): title salary 19,658,063 + performance 6,552,688 + living 420,000 + lunch 840,000 + grooming 300,000 = 27,770,751; probation: 16,709,354 + 5,569,785 + 420,000 + 840,000 + insurance paid in cash 4,226,484 = 27,765,623.
 

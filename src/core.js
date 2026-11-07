@@ -69,17 +69,17 @@ function migrateHolidays(list) {
 const THIRD = 100 / 3;
 const POLICY_PRESETS = {
   gross: {
-    work: { workDays: [1, 2, 3, 4, 5, 6], satStdHours: 4, lunchStart: '12:00', lunchEnd: '13:00', stdDaysMode: 'auto' },
+    work: { workDays: [1, 2, 3, 4, 5, 6], satStdHours: 4, lunchStart: '12:00', lunchEnd: '13:00', stdDaysMode: '26' },
     policy: () => ({
       preset: 'gross', periodStart: 1, dayPay: 'gross', otBasis: 'base', leavePay: 'base', otApproval: false, leaveUnitHours: 4,
-      wfh: false, wfhCapPct: 0, t13: false, items: [], ratings: [], defaultRating: '',
+      wfh: false, wfhCapPct: 0, t13: false, leaveAccrual: 'monthly', items: [], ratings: [], defaultRating: '',
     }),
   },
   office: {
     work: { workDays: [1, 2, 3, 4, 5], lunchStart: '11:45', lunchEnd: '12:45', stdDaysMode: 'auto' },
     policy: () => ({
       preset: 'office', periodStart: 24, dayPay: 'base', otBasis: 'base', leavePay: 'base', otApproval: true, leaveUnitHours: 1,
-      wfh: true, wfhCapPct: 30, t13: true,
+      wfh: true, wfhCapPct: 30, t13: true, leaveAccrual: 'annual',
       items: [
         { id: 'perf', tpl: 'perf', name: '', kind: 'performance', amount: 0, when: 'both', tax: 'taxable' },
         { id: 'living', tpl: 'living', name: '', kind: 'perDay', amount: 20000, when: 'both', tax: 'taxable' },
@@ -110,6 +110,7 @@ const DEFAULT_SETTINGS = () => ({
   office: { name: '', lat: null, lng: null, radius: 150 },
   work: {
     workDays: [1, 2, 3, 4, 5, 6], // weekdays worked (0 = Sunday … 6 = Saturday); other days are weekly rest days
+    nightStart: '22:00', nightEnd: '06:00', // night work (Labour Code 2019, Art. 106)
     lunchStart: '12:00', lunchEnd: '13:00',
     satStdHours: 4,          // Saturday 8:00–12:00 = 1 workday
     afternoonCutoff: '15:00',// leaving the office after this time = check-out
@@ -173,11 +174,11 @@ function computeDay(key, rec, settings, opts) {
   const P = policyOf(settings);
   r.wfh = !!(rec && rec.wfh && P.wfh);
   // Overtime that needs approval: pay the approved hours at the day's rate; recorded overtime is kept for reference
-  r.otRecorded = r.ot150 + r.ot200 + r.ot300; r.otPending = 0; r.otApproved = null;
+  r.otRecorded = r.ot150 + r.ot200 + r.ot300 + r.otn200 + r.otn270 + r.otn390; r.otPending = 0; r.otApproved = null;
   if (P.otApproval) {
     const ap = Math.max(0, Math.round((+(rec && rec.otApproved) || 0) * 60));
     r.otApproved = ap;
-    r.ot150 = r.ot200 = r.ot300 = 0;
+    r.ot150 = r.ot200 = r.ot300 = r.otn200 = r.otn270 = r.otn390 = 0;
     if (r.dt.type === 'holiday') r.ot300 = ap;
     else if (r.dt.type === 'weekday' || r.dt.type === 'saturday') r.ot150 = ap;
     else r.ot200 = ap;
@@ -212,7 +213,7 @@ function computeWorkDay(key, rec, settings, opts) {
     trips: g.trips || [], note: (rec && rec.note) || '',
     trip: !!((g.trips && g.trips.length) || (rec && rec.manualTrip)),
     workedMin: 0, lunchMin: 0, regularMin: 0, cong: 0, paidCong: 0,
-    rawExtra: 0, ot150: 0, ot200: 0, ot300: 0, spansLunch: false,
+    rawExtra: 0, ot150: 0, ot200: 0, ot300: 0, otn200: 0, otn270: 0, otn390: 0, nightMin: 0, spansLunch: false,
     missingOut: false, live: false, invalid: false, inR: null, outR: null,
   };
   if ((dt.type === 'holiday' || dt.type === 'comp') && dt.work) r.paidCong = 1; // paid holiday on a workday
@@ -249,6 +250,18 @@ function computeWorkDay(key, rec, settings, opts) {
     r.ot200 = floorB(r.workedMin);
   } else if (dt.type === 'holiday') {
     r.ot300 = floorB(r.workedMin);
+  }
+  // Night work (22:00–06:00): overtime in those hours is paid 200% (workday), 270% (rest day), 390% (holiday)
+  // (Decree 145/2020, Art. 57: OT rate + 30% + 20% of the day rate); normal hours at night earn +30%.
+  // Night hours are counted as overtime first.
+  const ns = toMin(w.nightStart || '22:00'), ne = toMin(w.nightEnd || '06:00');
+  const night = floorB(overlap(inMin, outMin, ns, 24 * 60) + overlap(inMin, outMin, 0, ne));
+  if (night > 0) {
+    let used = 0;
+    if (r.ot150) { used = Math.min(r.ot150, night); r.ot150 -= used; r.otn200 = used; }
+    else if (r.ot200) { used = Math.min(r.ot200, night); r.ot200 -= used; r.otn270 = used; }
+    else if (r.ot300) { used = Math.min(r.ot300, night); r.ot300 -= used; r.otn390 = used; }
+    r.nightMin = Math.max(0, Math.min(night - used, r.regularMin));
   }
   return r;
 }
@@ -422,10 +435,13 @@ function computeMonth(y, m, days, settings, now, month) {
   const rating = ratingFor(P, month && month.rating);
   const items = (P.items || []).map(it => ({ ...it, raw: 0 }));
   const t = { workedMin: 0, cong: 0, paidCong: 0, paidLeave: 0, unpaidLeave: 0, ot150: 0, ot200: 0, ot300: 0,
-    workPay: 0, holidayPay: 0, leavePay: 0, ot150Pay: 0, ot200Pay: 0, ot300Pay: 0, itemsPay: 0,
+    otn200: 0, otn270: 0, otn390: 0, nightMin: 0,
+    workPay: 0, holidayPay: 0, leavePay: 0, ot150Pay: 0, ot200Pay: 0, ot300Pay: 0,
+    otn200Pay: 0, otn270Pay: 0, otn390Pay: 0, nightPay: 0, itemsPay: 0,
     basePay: 0, otPay: 0, total: 0, tripDays: 0, missing: 0, noSalaryDays: 0,
     wfhDays: 0, otPending: 0, lunchDays: 0, t13Cong: 0 };
-  const raw = { workPay: 0, holidayPay: 0, leavePay: 0, ot150Pay: 0, ot200Pay: 0, ot300Pay: 0 };
+  const raw = { workPay: 0, holidayPay: 0, leavePay: 0, ot150Pay: 0, ot200Pay: 0, ot300Pay: 0, otn200Pay: 0, otn270Pay: 0, otn390Pay: 0, nightPay: 0 };
+  const NIGHT = { otn200: 2, otn270: 2.7, otn390: 3.9 };
   for (const key of period.keys) {
     const opts = now && now.key === key ? { nowMin: now.min } : null;
     const r = computeDay(key, days[key] || {}, settings, opts);
@@ -442,6 +458,8 @@ function computeMonth(y, m, days, settings, now, month) {
     r.ot150Pay = Math.round(r.ot150 / 60 * 1.5 * r.hourly);
     r.ot200Pay = Math.round(r.ot200 / 60 * 2 * r.hourly);
     r.ot300Pay = Math.round(r.ot300 / 60 * 3 * r.hourly);
+    for (const k in NIGHT) r[k + 'Pay'] = Math.round(r[k] / 60 * NIGHT[k] * r.hourly);
+    r.nightPay = Math.round(r.nightMin / 60 * 0.3 * r.hourly);
     r.items = {}; r.taxableRaw = 0; r.mealRaw = 0;
     let itemsDay = 0;
     for (const it of items) {
@@ -451,13 +469,14 @@ function computeMonth(y, m, days, settings, now, month) {
       if (it.tax === 'meal') r.mealRaw += v; else if (it.tax !== 'exempt') r.taxableRaw += v;
     }
     r.basePay = r.workPay + r.holidayPay + r.leavePay;
-    r.otPay = r.ot150Pay + r.ot200Pay + r.ot300Pay;
+    r.otPay = r.ot150Pay + r.ot200Pay + r.ot300Pay + r.otn200Pay + r.otn270Pay + r.otn390Pay + r.nightPay;
     r.itemsPay = Math.round(itemsDay);
     r.total = r.basePay + r.otPay + r.itemsPay;
     if (!sal && (r.cong || r.paidCong || r.paidLeave || r.ot150 || r.ot200 || r.ot300)) t.noSalaryDays++;
     t.workedMin += r.workedMin; t.cong += r.cong; t.paidCong += r.paidCong;
     t.paidLeave += r.paidLeave; t.unpaidLeave += r.unpaidLeave;
     t.ot150 += r.ot150; t.ot200 += r.ot200; t.ot300 += r.ot300;
+    t.otn200 += r.otn200; t.otn270 += r.otn270; t.otn390 += r.otn390; t.nightMin += r.nightMin;
     if (r.wfh && r.cong > 0) t.wfhDays++;
     if (r.cong > 0 && r.spansLunch) t.lunchDays++;
     t.otPending += r.otPending;
@@ -465,6 +484,8 @@ function computeMonth(y, m, days, settings, now, month) {
     // Month totals add the unrounded day amounts, so a full month of work pays exactly the monthly gross
     raw.workPay += r.cong * r.daily; raw.holidayPay += r.paidCong * r.daily; raw.leavePay += r.paidLeave * r.leaveDaily;
     raw.ot150Pay += r.ot150 / 60 * 1.5 * r.hourly; raw.ot200Pay += r.ot200 / 60 * 2 * r.hourly; raw.ot300Pay += r.ot300 / 60 * 3 * r.hourly;
+    for (const k in NIGHT) raw[k + 'Pay'] += r[k] / 60 * NIGHT[k] * r.hourly;
+    raw.nightPay += r.nightMin / 60 * 0.3 * r.hourly;
     if (r.trip) t.tripDays++;
     if (r.missingOut || r.invalid) t.missing++;
     rows.push(r);
@@ -473,14 +494,20 @@ function computeMonth(y, m, days, settings, now, month) {
   t.items = items.map(it => ({ id: it.id, tpl: it.tpl, name: it.name, kind: it.kind, tax: it.tax, unit: +it.amount || 0, amount: Math.round(it.raw) }));
   t.itemsPay = t.items.reduce((a, i) => a + i.amount, 0);
   t.basePay = t.workPay + t.holidayPay + t.leavePay;
-  t.otPay = t.ot150Pay + t.ot200Pay + t.ot300Pay;
+  t.otPay = t.ot150Pay + t.ot200Pay + t.ot300Pay + t.otn200Pay + t.otn270Pay + t.otn390Pay + t.nightPay;
   t.total = t.basePay + t.otPay + t.itemsPay;
+  // Gross per contract period, for months that are split across two payslips (probation + permanent)
+  t.byStatus = {};
+  for (const r of rows) if (r.salary) t.byStatus[r.salary.status] = (t.byStatus[r.salary.status] || 0) + r.cong * r.daily + r.paidCong * r.daily
+    + r.paidLeave * r.leaveDaily + (r.ot150 * 1.5 + r.ot200 * 2 + r.ot300 * 3 + r.otn200 * 2 + r.otn270 * 2.7 + r.otn390 * 3.9 + r.nightMin * 0.3) / 60 * r.hourly
+    + Object.values(r.items).reduce((a, v) => a + v, 0);
+  for (const k in t.byStatus) t.byStatus[k] = Math.round(t.byStatus[k]);
   t.wfhCap = P.wfh && P.wfhCapPct > 0 ? Math.floor(std * P.wfhCapPct / 100 + 1e-9) : null;
   return { y, m, std, period, rows, totals: t, contract: C, policy: P, rating, deductions: deductionsFor(y, m, rows, t, C) };
 }
 
 /* Annual leave used in a year. monthDays(m) returns that month's {key: rec}. */
-function leaveUsed(y, monthDays, settings) {
+function leaveUsed(y, monthDays, settings, asOf) {
   let used = 0;
   for (let m = 1; m <= 12; m++) {
     const days = monthDays(m) || {};
@@ -491,8 +518,21 @@ function leaveUsed(y, monthDays, settings) {
       else if (dt.type === 'saturday') used += 1;
     }
   }
-  const quota = Math.max(0, +contractOf(settings).leaveDaysPerYear || 0);
-  return { used: Math.round(used * 1000) / 1000, quota, left: Math.round((quota - used) * 1000) / 1000 };
+  const C = contractOf(settings), quota = Math.max(0, +C.leaveDaysPerYear || 0);
+  let accrued = quota;
+  // Monthly accrual: quota ÷ 12 for each full month worked in the year, counted from the contract start up to asOf
+  if (policyOf(settings).leaveAccrual === 'monthly' && asOf) {
+    const start0 = C.probation.from || C.official.from;
+    if (start0) {
+      const start = start0 < y + '-01-01' ? y + '-01-01' : start0;
+      const end = addDays(asOf < y + '-12-31' ? asOf : y + '-12-31', 1);
+      const [sy, sm, sd] = start.split('-').map(Number), [ey, em, ed] = end.split('-').map(Number);
+      const months = end <= start ? 0 : Math.max(0, (ey - sy) * 12 + (em - sm) - (ed < sd ? 1 : 0));
+      accrued = Math.min(quota, Math.round(months * quota / 12 * 100) / 100);
+    } else accrued = 0;
+  }
+  return { used: Math.round(used * 1000) / 1000, quota, accrued, monthly: accrued !== quota || policyOf(settings).leaveAccrual === 'monthly',
+    left: Math.round((accrued - used) * 1000) / 1000 };
 }
 
 /* ===== GPS state machine (office day / trip day) =====

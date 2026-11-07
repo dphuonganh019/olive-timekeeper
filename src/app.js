@@ -506,7 +506,7 @@ function renderMonth(M) {
       <td class="n" style="color:var(--r200)">${r.ot200 ? fmtH(r.ot200) : dash()}</td>
       <td class="n" style="color:var(--r300)">${r.ot300 ? fmtH(r.ot300) : dash()}</td>
       <td>${r.trip ? `<span class="pill trip">${esc(tripText(r))}</span>` : ''}</td>
-      <td class="small" style="max-width:220px;white-space:normal">${esc(r.note || (r.dt.type === 'holiday' || r.dt.type === 'comp' ? dayLabel(r.dt) : ''))}</td></tr>`;
+      <td class="small" style="max-width:220px;white-space:normal">${esc([nightNote(r), r.note || (r.dt.type === 'holiday' || r.dt.type === 'comp' ? dayLabel(r.dt) : '')].filter(Boolean).join(' · '))}</td></tr>`;
   }).join('');
   const foot = `<tfoot><tr><td class="sticky">${esc(T('col.total'))}</td><td></td><td></td><td></td><td></td><td class="n">${fmtH(t.workedMin)}</td><td class="n">${fmtNum(round2(t.cong + t.paidCong + t.paidLeave))}</td><td class="n">${fmtH(t.ot150)}</td><td class="n">${fmtH(t.ot200)}</td><td class="n">${fmtH(t.ot300)}</td><td>${esc(T('month.days', { n: t.tripDays }))}</td><td></td></tr></tfoot>`;
   const tb = $('#monthTable');
@@ -534,6 +534,9 @@ function payBreakdown(M) {
   };
 }
 const statusLabel = s => T(s === 'official' ? 'pay.status.official' : 'pay.status.probation');
+/* Night work lines that have hours this month: [key, minutes, percent, pay] */
+const nightLines = t => [['otn200', t.otn200, 200, t.otn200Pay], ['otn270', t.otn270, 270, t.otn270Pay], ['otn390', t.otn390, 390, t.otn390Pay], ['night', t.nightMin, 30, t.nightPay]].filter(x => x[1] > 0);
+const nightNote = r => [r.otn200 && T('note.otn', { h: fmtHdec(r.otn200), pct: 200 }), r.otn270 && T('note.otn', { h: fmtHdec(r.otn270), pct: 270 }), r.otn390 && T('note.otn', { h: fmtHdec(r.otn390), pct: 390 }), r.nightMin && T('note.night', { h: fmtHdec(r.nightMin) })].filter(Boolean).join(' · ');
 /* One pay item's explanation: "21 workdays × 20,000", "19,658,063 × 33.33% × 21/21 workdays" … */
 function itemDetail(i, M) {
   const t = M.totals, b = { cong: fmtNum(round2(t.cong)), std: M.std, amt: fmtVnd(i.unit) };
@@ -588,14 +591,15 @@ function renderPay(M) {
   const sec = k => `<tr><td class="sec" colspan="2">${esc(T(k))}</td></tr>`;
   $('#payLines').innerHTML = `<h3>${esc(T('pay.details'))}</h3><table class="lines" style="margin-top:6px"><tbody>
     ${sec('pay.sec.income')}
-    ${line(esc(T('pay.line.work')), T('pay.line.workSub', { n: fmtNum(b.workCong) }) + (b.single ? ' × ' + fmtVnd(b.dayRate) : ''), fmtVnd(b.workPay))}
+    ${line(esc(T('pay.line.work')), T('pay.line.workSub', { n: fmtNum(b.workCong) }) + ' (' + T('pay.hours', { h: fmtNum(round2(b.workCong * 8)) }) + ')' + (b.single ? ' × ' + fmtVnd(b.dayRate) : ''), fmtVnd(b.workPay))}
     ${line(esc(T('pay.line.paid')), T('pay.line.paidSub', { n: b.paidCong }), fmtVnd(b.paidPay))}
     ${line(esc(T(M.policy.leavePay === 'gross' ? 'pay.line.leave' : 'pay.line.leave')), T(M.policy.leavePay === 'gross' ? 'pay.line.leaveSubGross' : 'pay.line.leaveSub', { n: fmtNum(b.paidLeave) }) + (b.single ? ' × ' + fmtVnd(b.leaveRate) : ''), fmtVnd(b.leavePay))}
     ${b.items.map(i => line(esc(itemName(i)), itemDetail(i, M), fmtVnd(i.amount))).join('')}
     ${line(`<span class="pill r150">${esc(T('pay.line.ot150'))}</span> ${hrs(t.ot150)}`, unit(150), fmtVnd(b.ot150Pay))}
     ${line(`<span class="pill r200">${esc(T('pay.line.ot200'))}</span> ${hrs(t.ot200)}`, unit(200), fmtVnd(b.ot200Pay))}
     ${line(`<span class="pill r300">${esc(T('pay.line.ot300'))}</span> ${hrs(t.ot300)}`, unit(300), fmtVnd(b.ot300Pay))}
-    <tr class="sub"><td>${esc(T('pay.line.gross'))}${sub(D.mealExempt || D.exemptItems ? T('pay.line.grossSubFree', { ot: fmtVnd(t.otPay), free: fmtVnd(D.mealExempt + D.exemptItems) }) : T('pay.line.grossSub', { ot: fmtVnd(t.otPay) }))}</td><td class="n">${fmtVnd(D.gross)}</td></tr>
+    ${nightLines(t).map(([k, min, pct, pay]) => line(`<span class="pill ${k === 'night' ? '' : 'r200'}">${esc(T('pay.line.' + k))}</span> ${hrs(min)}`, unit(pct), fmtVnd(pay))).join('')}
+    <tr class="sub"><td>${esc(T('pay.line.gross'))}${sub(D.mealExempt || D.exemptItems ? T('pay.line.grossSubFree', { ot: fmtVnd(t.otPay), free: fmtVnd(D.mealExempt + D.exemptItems) }) : T('pay.line.grossSub', { ot: fmtVnd(t.otPay) }))}${b.multi && t.byStatus.probation != null && t.byStatus.official != null ? sub(T('pay.line.byStatus', { p: fmtVnd(t.byStatus.probation), o: fmtVnd(t.byStatus.official) })) : ''}</td><td class="n">${fmtVnd(D.gross)}</td></tr>
     ${sec('pay.sec.deduct')}
     ${deductionLines(D).map(([l, d, a]) => line(esc(l), d, neg(a), a ? 'neg' : '')).join('')}
     <tr class="sub"><td>${esc(T('pay.line.deductTotal'))}</td><td class="n neg">${neg(D.totalDeductions)}</td></tr>
@@ -624,11 +628,11 @@ async function ensureYear(y) {
   loadedYears.add(y); return true;
 }
 function renderLeaveCard(M) {
-  const u = leaveUsed(view.y, m => (months[monthKey(view.y, m)] || {}).days, settings);
+  const u = leaveUsed(view.y, m => (months[monthKey(view.y, m)] || {}).days, settings, M.period.to);
   const t = M.totals;
   $('#payLeave').innerHTML = `<h3>${esc(T('lv.title'))}</h3>
     <div class="stats" style="margin-top:10px">
-      <div class="stat"><div class="k">${esc(T('lv.used', { y: view.y }))}</div><div class="v">${fmtNum(u.used)} / ${fmtNum(u.quota)}</div></div>
+      <div class="stat"><div class="k">${esc(T(u.monthly ? 'lv.usedAccrued' : 'lv.used', { y: view.y, d: fmtDM(M.period.to) }))}</div><div class="v">${fmtNum(u.used)} / ${fmtNum(u.accrued)}</div></div>
       <div class="stat ${u.left < 0 ? 'r300' : 'r200'}"><div class="k">${esc(T('lv.left'))}</div><div class="v">${fmtNum(u.left)}</div></div>
       <div class="stat"><div class="k">${esc(T('lv.month'))}</div><div class="v">${fmtNum(t.paidLeave)} · ${fmtNum(t.unpaidLeave)}</div></div>
       ${M.policy.t13 ? `<div class="stat"><div class="k">${esc(T('lv.t13', { y: view.y }))}</div><div class="v">${fmtNum(round2(yearT13(view.y)))}</div></div>` : ''}
@@ -860,6 +864,7 @@ function renderPolicy() {
   $('#polPeriod').value = P.periodStart || 1;
   $('#polDayPay').value = P.dayPay; $('#polOtBasis').value = P.otBasis; $('#polLeavePay').value = P.leavePay;
   $('#polLeaveUnit').value = String(+P.leaveUnitHours >= 4 ? 4 : 1);
+  $('#polAccrual').value = P.leaveAccrual === 'monthly' ? 'monthly' : 'annual';
   $('#polOtApproval').checked = !!P.otApproval; $('#polWfh').checked = !!P.wfh; $('#polT13').checked = !!P.t13;
   $('#polWfhCap').value = P.wfhCapPct || 0; $('#polWfhCapBox').hidden = !P.wfh;
   const taxTxt = it => T('item.tax.' + (it.tax || 'taxable'));
@@ -894,7 +899,7 @@ function readPolicy() {
   const periodChanged = periodStart !== (+P.periodStart || 1);
   settings.policy = { ...P, preset: 'custom', periodStart,
     dayPay: $('#polDayPay').value, otBasis: $('#polOtBasis').value, leavePay: $('#polLeavePay').value,
-    leaveUnitHours: +$('#polLeaveUnit').value, otApproval: $('#polOtApproval').checked, wfh: $('#polWfh').checked,
+    leaveUnitHours: +$('#polLeaveUnit').value, leaveAccrual: $('#polAccrual').value, otApproval: $('#polOtApproval').checked, wfh: $('#polWfh').checked,
     t13: $('#polT13').checked, wfhCapPct: Math.min(100, Math.max(0, num($('#polWfhCap').value, 0))) };
   if (periodChanged) { viewToday().then(() => afterPolicy(T('set.saved'))); } else afterPolicy(T('set.saved'));
   startGps();
@@ -915,7 +920,7 @@ $('#rtAdd').addEventListener('click', () => {
   afterPolicy();
 });
 function afterPolicy(msg) { saveSettings(); renderPolicy(); renderMonthViews(); renderToday(); if (msg) toast(msg); }
-['#polPeriod', '#polDayPay', '#polOtBasis', '#polLeavePay', '#polLeaveUnit', '#polOtApproval', '#polWfh', '#polT13', '#polWfhCap']
+['#polPeriod', '#polAccrual', '#polDayPay', '#polOtBasis', '#polLeavePay', '#polLeaveUnit', '#polOtApproval', '#polWfh', '#polT13', '#polWfhCap']
   .forEach(sel => $(sel).addEventListener('change', readPolicy));
 $('#polApply').addEventListener('click', () => {
   const id = $('#polPreset').value, pre = POLICY_PRESETS[id];
@@ -1089,7 +1094,7 @@ $('#xlsxBtn').addEventListener('click', async () => {
       r.lunchMin || '', r.workedMin ? hdec(r.workedMin) : '', r.cong || '', r.paidCong || '', r.leave ? leaveText(r.leave) : '',
       r.ot150 ? hdec(r.ot150) : '', r.ot200 ? hdec(r.ot200) : '', r.ot300 ? hdec(r.ot300) : '',
       r.trip ? (r.trips.length ? r.trips.map(x => x.start + '-' + (x.end || '?')).join(', ') : T('month.yes')) : '',
-      r.basePay + r.itemsPay || '', r.otPay || '', r.total || '', [r.wfh ? 'WFH' : '', r.otPending ? T('x.otPending', { h: fmtHdec(r.otPending) }) : '', r.note].filter(Boolean).join(' · '),
+      r.basePay + r.itemsPay || '', r.otPay || '', r.total || '', [r.wfh ? 'WFH' : '', r.otPending ? T('x.otPending', { h: fmtHdec(r.otPending) }) : '', nightNote(r), r.note].filter(Boolean).join(' · '),
     ]));
     aoa.push([T('x.total'), '', '', '', '', '', '', '', '', '', hdec(t.workedMin), round2(t.cong), t.paidCong, T('x.leaveTotal', { p: fmtNum(t.paidLeave), u: fmtNum(t.unpaidLeave) }), hdec(t.ot150), hdec(t.ot200), hdec(t.ot300), T('x.unit.days', { n: t.tripDays }), t.basePay, t.otPay, t.total, '']);
     aoa.push([]);
@@ -1103,6 +1108,7 @@ $('#xlsxBtn').addEventListener('click', async () => {
     aoa.push(line(T('x.line.ot150'), T('x.unit.hours', { n: hdec(t.ot150) }), b.ot150Pay));
     aoa.push(line(T('x.line.ot200'), T('x.unit.hours', { n: hdec(t.ot200) }), b.ot200Pay));
     aoa.push(line(T('x.line.ot300'), T('x.unit.hours', { n: hdec(t.ot300) }), b.ot300Pay));
+    nightLines(t).forEach(([k, min, , pay]) => aoa.push(line(T('pay.line.' + k), T('x.unit.hours', { n: hdec(min) }), pay)));
     aoa.push(line(T('x.line.gross'), '', D.gross));
     deductionLines(D).forEach(([l, d, a]) => aoa.push(line(l, d, a ? -a : 0)));
     aoa.push(line(T('x.line.deductTotal'), '', -D.totalDeductions));
@@ -1128,7 +1134,7 @@ $('#pdfBtn').addEventListener('click', async () => {
     const stage = $('#pdfStage');
     const P = k => esc(T('pdf.col.' + k));
     const head = `<tr><th>${P('date')}</th><th>${P('dow')}</th><th>${P('type')}</th><th>${P('in')}</th><th>${P('out')}</th><th class="n">${P('lunch')}</th><th class="n">${P('worked')}</th><th class="n">${P('cong')}</th><th class="n">OT 150%</th><th class="n">OT 200%</th><th class="n">OT 300%</th><th>${P('trip')}</th><th class="n">${P('amount')}</th><th>${P('note')}</th></tr>`;
-    const row = r => `<tr><td>${esc(fmtDM(r.key))}</td><td>${esc(dowShort(r.dt.dow))}</td><td>${esc(dayLabel(r.dt))}</td><td>${r.inHM ? r.inHM + (r.inR && r.inR !== r.inHM ? ' → ' + r.inR : '') + (r.inSrc === 'gps' ? ' (GPS)' : '') : ''}</td><td>${r.outHM ? r.outHM + (r.outR && r.outR !== r.outHM ? ' → ' + r.outR : '') + (r.outSrc === 'gps' ? ' (GPS)' : '') : r.missingOut ? esc(T('pdf.missing')) : ''}</td><td class="n">${r.lunchMin || ''}</td><td class="n">${r.workedMin ? fmtH(r.workedMin) : ''}</td><td class="n">${(r.cong + r.paidCong + r.paidLeave) ? fmtNum(r.cong + r.paidCong + r.paidLeave) : ''}</td><td class="n">${r.ot150 ? fmtH(r.ot150) : ''}</td><td class="n">${r.ot200 ? fmtH(r.ot200) : ''}</td><td class="n">${r.ot300 ? fmtH(r.ot300) : ''}</td><td>${r.trip ? esc(tripText(r)) : ''}</td><td class="n">${r.total ? fmtNum(r.total) : ''}</td><td>${esc([r.wfh ? 'WFH' : '', r.leave ? leaveText(r.leave) : '', r.note].filter(Boolean).join(' · '))}</td></tr>`;
+    const row = r => `<tr><td>${esc(fmtDM(r.key))}</td><td>${esc(dowShort(r.dt.dow))}</td><td>${esc(dayLabel(r.dt))}</td><td>${r.inHM ? r.inHM + (r.inR && r.inR !== r.inHM ? ' → ' + r.inR : '') + (r.inSrc === 'gps' ? ' (GPS)' : '') : ''}</td><td>${r.outHM ? r.outHM + (r.outR && r.outR !== r.outHM ? ' → ' + r.outR : '') + (r.outSrc === 'gps' ? ' (GPS)' : '') : r.missingOut ? esc(T('pdf.missing')) : ''}</td><td class="n">${r.lunchMin || ''}</td><td class="n">${r.workedMin ? fmtH(r.workedMin) : ''}</td><td class="n">${(r.cong + r.paidCong + r.paidLeave) ? fmtNum(r.cong + r.paidCong + r.paidLeave) : ''}</td><td class="n">${r.ot150 ? fmtH(r.ot150) : ''}</td><td class="n">${r.ot200 ? fmtH(r.ot200) : ''}</td><td class="n">${r.ot300 ? fmtH(r.ot300) : ''}</td><td>${r.trip ? esc(tripText(r)) : ''}</td><td class="n">${r.total ? fmtNum(r.total) : ''}</td><td>${esc([r.wfh ? 'WFH' : '', r.leave ? leaveText(r.leave) : '', nightNote(r), r.note].filter(Boolean).join(' · '))}</td></tr>`;
     const metaItem = (k, v) => `<span>${esc(T(k))}: <b>${esc(v)}</b></span>`;
     const meta = `<div class="meta">${metaItem('x.employee', settings.name || '—')}${metaItem('x.status', h.statusTxt)}${metaItem('x.salary', h.salaryTxt)}${metaItem('x.otBase', h.otBaseTxt)}${metaItem('x.std', M.std)}</div>`;
     const rows = M.rows, chunks = [rows.slice(0, 16), rows.slice(16)];
@@ -1149,6 +1155,7 @@ $('#pdfBtn').addEventListener('click', async () => {
         ${sumRow(T('x.line.ot150'), T('x.unit.hours', { n: fmtHdec(t.ot150) }), b.ot150Pay)}
         ${sumRow(T('x.line.ot200'), T('x.unit.hours', { n: fmtHdec(t.ot200) }), b.ot200Pay)}
         ${sumRow(T('x.line.ot300'), T('x.unit.hours', { n: fmtHdec(t.ot300) }), b.ot300Pay)}
+        ${nightLines(t).map(([k, min, , pay]) => sumRow(T('pay.line.' + k), T('x.unit.hours', { n: fmtHdec(min) }), pay)).join('')}
         <tr><th>${esc(T('x.line.gross'))}</th><th></th><th class="n">${fmtNum(b.D.gross)}</th></tr>
         ${deductionLines(b.D).map(([l, d, a]) => `<tr><td>${esc(l)} <span style="color:var(--pdf-muted);font-size:10px">· ${esc(d)}</span></td><td></td><td class="n">${a ? '−' + fmtNum(a) : '0'}</td></tr>`).join('')}
         <tr><th>${esc(T('x.line.deductTotal'))}</th><th></th><th class="n">${b.D.totalDeductions ? '−' : ''}${fmtNum(b.D.totalDeductions)}</th></tr>

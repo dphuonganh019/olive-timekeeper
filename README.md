@@ -38,7 +38,8 @@ My workday rarely fits a fixed 8:00–17:00 schedule. Some days I arrive at 6:00
 - Overtime at **150%** (beyond the standard hours, from 30 minutes, in 30-minute steps), **200%** on Sundays and compensatory days, **300%** on public holidays, with Vietnamese public holidays for 2026–2027 preloaded.
 - Contract set up once: probation and permanent periods with base and gross salary. Day pay uses gross salary; overtime and paid annual leave use the base salary.
 - Company pay policies with presets: pay period (calendar month or e.g. 24th to 23rd), workdays of the week, day pay on gross or title salary, approved-only overtime, WFH with a monthly limit, leave by half day or by hour, and allowances paid per workday, per lunch day, prorated, fixed or as monthly performance pay, each taxable, tax-free or under the meal-allowance cap. Policy files can be shared with colleagues.
-- Paid and unpaid leave (whole day, half day or hours) with an annual leave balance and a 13th-month day count.
+- Paid and unpaid leave (whole day, half day or hours), annual leave earned monthly or yearly, and a 13th-month day count.
+- Night work: night overtime at 200% / 270% / 390% and +30% for normal night hours.
 - Take-home pay: 10.5% employee insurance with legal caps and the 14-day rule, and 2026 personal income tax (5 brackets, family deductions, tax-free overtime, 10% probation withholding).
 
 ### Reports and data
@@ -72,7 +73,7 @@ flowchart LR
 
 ## Quality
 
-- **54 automated tests** run on every build, covering rounding, half days, Saturday rules, overtime rates, salary changes, business trips, false geofence signals, lunch breaks, widget punches and active-tracking scenarios taken from real days, plus checks that every English text has a Vietnamese counterpart with the same placeholders.
+- **57 automated tests** run on every build, covering rounding, half days, Saturday rules, overtime rates, salary changes, business trips, false geofence signals, lunch breaks, widget punches and active-tracking scenarios taken from real days, plus checks that every English text has a Vietnamese counterpart with the same placeholders.
 - The build fails if any test fails, so a broken rule can't ship.
 - The UI was exercised in a headless browser against a simulated Android bridge, in both languages.
 
