@@ -8,8 +8,8 @@ const ctx = {};
 vm.createContext(ctx);
 const src = f => readFileSync(new URL('../src/' + f, import.meta.url), 'utf8');
 vm.runInContext(src('core.js') + '\n' + src('i18n.js') +
-  ';this.X={computeDay,computeMonth,contractOf,progressiveTax,leaveUsed,POLICY_PRESETS,stdDays,gpsStep,geofenceReplay,DEFAULT_SETTINGS,settleLeave,leaveFinalMin,migrateHolidays,dayType,I18N,T,setLang,eventText,signalText,holidayName,dayLabel};', ctx);
-const { computeDay, computeMonth, contractOf, progressiveTax, leaveUsed, POLICY_PRESETS, stdDays, geofenceReplay, DEFAULT_SETTINGS, settleLeave, leaveFinalMin } = ctx.X;
+  ';this.X={computeDay,computeMonth,contractOf,progressiveTax,leaveUsed,POLICY_PRESETS,stdDays,periodOf,payMonthOf,gpsStep,geofenceReplay,DEFAULT_SETTINGS,settleLeave,leaveFinalMin,migrateHolidays,dayType,I18N,T,setLang,eventText,signalText,holidayName,dayLabel};', ctx);
+const { computeDay, computeMonth, contractOf, progressiveTax, leaveUsed, POLICY_PRESETS, stdDays, periodOf, payMonthOf, geofenceReplay, DEFAULT_SETTINGS, settleLeave, leaveFinalMin } = ctx.X;
 const S = DEFAULT_SETTINGS();
 const day = (i, o, key = '2026-10-06') => computeDay(key, { manualIn: i, manualOut: o }, S);
 const at = (d, h, m) => new Date(2026, 9, d, h, m).getTime();
@@ -197,19 +197,34 @@ const office = (contract, extra = {}) => {
 };
 const OFF = { official: { from: '2026-01-01', base: 19658063 } };
 const PRO = { probation: { from: '2026-01-01', to: '2026-12-31', base: 16709354 } };
+// Every Mon–Fri of the pay period (24th of the previous month to the 23rd)
 const weekdays = (y, m, from = '08:30', to = '17:30') => {
   const out = {};
-  for (let d = 1; d <= new Date(y, m, 0).getDate(); d++) {
-    const w = new Date(y, m - 1, d).getDay();
-    if (w > 0 && w < 6) out[y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0')] = { manualIn: from, manualOut: to };
+  for (const k of periodOf(y, m, office(OFF)).keys) {
+    const w = new Date(k + 'T00:00').getDay();
+    if (w > 0 && w < 6) out[k] = { manualIn: from, manualOut: to };
   }
   return out;
 };
 const item = (M, id) => M.totals.items.find(i => i.id === id).amount;
 
-test('preset 2: standard workdays are the Mon–Fri days of the month', () => {
-  assert.equal(stdDays(2026, 8, office(OFF)), 21);
+test('preset 2: the pay period runs from the 24th to the 23rd; standard workdays are its Mon–Fri days', () => {
+  const p = periodOf(2026, 11, office(OFF));
+  assert.equal(p.from, '2026-10-24'); assert.equal(p.to, '2026-11-23'); assert.equal(p.keys.length, 31);
+  assert.equal(periodOf(2026, 1, office(OFF)).from, '2025-12-24');
+  assert.equal(periodOf(2026, 3, office(OFF)).from, '2026-02-24');
+  assert.equal(stdDays(2026, 8, office(OFF)), 21);             // 24 Jul – 23 Aug
   assert.equal(stdDays(2026, 10, office(OFF)), 22);
+  assert.equal(JSON.stringify(payMonthOf('2026-11-23', office(OFF))), '{"y":2026,"m":11}');
+  assert.equal(JSON.stringify(payMonthOf('2026-11-24', office(OFF))), '{"y":2026,"m":12}');
+  assert.equal(JSON.stringify(payMonthOf('2026-12-28', office(OFF))), '{"y":2027,"m":1}');
+  const M = computeMonth(2026, 11, { '2026-10-26': { manualIn: '08:30', manualOut: '17:30' }, '2026-11-24': { manualIn: '08:30', manualOut: '17:30' } }, office(OFF));
+  assert.equal(M.rows[0].key, '2026-10-24'); assert.equal(M.totals.cong, 1);  // 24 Nov belongs to December
+});
+
+test('preset 1 keeps calendar months', () => {
+  const p = periodOf(2026, 11, DEFAULT_SETTINGS());
+  assert.equal(p.from, '2026-11-01'); assert.equal(p.to, '2026-11-30');
 });
 
 test('preset 2: a full permanent month reproduces the offer letter (27,770,750)', () => {
@@ -299,12 +314,14 @@ test('preset 2: overtime is paid only for approved hours; Saturday is a rest day
 });
 
 test('preset 2: a holiday on a weekday is paid at the day rate; no insurance month needs Mon–Fri days only', () => {
-  const s = office({ official: { from: '2026-11-16', base: 19658063 } });
-  const M = computeMonth(2026, 11, {}, s);
-  assert.equal(M.rows[23].paidCong, 1);                             // 24 Nov, Tuesday
-  assert.equal(M.deductions.insurance.due, true);                   // 2–13 Nov: 10 Mon–Fri days before → still due
-  const late = office({ official: { from: '2026-11-23', base: 19658063 } });  // 2–20 Nov: 15 days before
-  assert.equal(computeMonth(2026, 11, {}, late).deductions.insurance.reason, 'under14');
+  const s = office({ official: { from: '2026-12-07', base: 19658063 } });
+  const M = computeMonth(2026, 12, {}, s);                          // period 24 Nov – 23 Dec
+  assert.equal(M.rows[0].key, '2026-11-24'); assert.equal(M.totals.holidayPay, 0); // before the contract: unpaid
+  const s2 = office({ official: { from: '2026-11-01', base: 19658063 } });
+  assert.equal(computeMonth(2026, 12, {}, s2).totals.holidayPay, Math.round(19658063 / 22)); // 24 Nov, Tuesday
+  assert.equal(M.deductions.insurance.due, true);                   // 24 Nov – 4 Dec: 9 Mon–Fri days before → still due
+  const late = office({ official: { from: '2026-12-16', base: 19658063 } });  // 16 days before
+  assert.equal(computeMonth(2026, 12, {}, late).deductions.insurance.reason, 'under14');
 });
 
 test('preset 1 keeps its rules when nothing is configured', () => {

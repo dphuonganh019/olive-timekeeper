@@ -71,14 +71,14 @@ const POLICY_PRESETS = {
   gross: {
     work: { workDays: [1, 2, 3, 4, 5, 6], satStdHours: 4, lunchStart: '12:00', lunchEnd: '13:00', stdDaysMode: 'auto' },
     policy: () => ({
-      preset: 'gross', dayPay: 'gross', otBasis: 'base', leavePay: 'base', otApproval: false, leaveUnitHours: 4,
+      preset: 'gross', periodStart: 1, dayPay: 'gross', otBasis: 'base', leavePay: 'base', otApproval: false, leaveUnitHours: 4,
       wfh: false, wfhCapPct: 0, t13: false, items: [], ratings: [], defaultRating: '',
     }),
   },
   office: {
     work: { workDays: [1, 2, 3, 4, 5], lunchStart: '11:45', lunchEnd: '12:45', stdDaysMode: 'auto' },
     policy: () => ({
-      preset: 'office', dayPay: 'base', otBasis: 'base', leavePay: 'base', otApproval: true, leaveUnitHours: 1,
+      preset: 'office', periodStart: 24, dayPay: 'base', otBasis: 'base', leavePay: 'base', otApproval: true, leaveUnitHours: 1,
       wfh: true, wfhCapPct: 30, t13: true,
       items: [
         { id: 'perf', tpl: 'perf', name: '', kind: 'performance', amount: 0, when: 'both', tax: 'taxable' },
@@ -365,14 +365,31 @@ function deductionsFor(y, m, rows, totals, contract) {
   };
 }
 
-/* Standard workdays: the workdays of the week in the month (holidays included), or a fixed number. */
+/* The pay period of month m: the calendar month, or — when the policy's period starts on day S > 1 —
+   from day S of the previous month to day S−1 of month m (e.g. "November" = 24 Oct – 23 Nov). */
+function periodOf(y, m, settings) {
+  const S = Math.min(28, Math.max(1, Math.floor(+policyOf(settings).periodStart || 1)));
+  let from, to;
+  if (S === 1) { from = new Date(y, m - 1, 1); to = new Date(y, m, 0); }
+  else { from = new Date(y, m - 2, S); to = new Date(y, m - 1, S - 1); }
+  const keys = [];
+  for (const d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) keys.push(dateKey(d));
+  return { start: S, from: keys[0], to: keys[keys.length - 1], keys };
+}
+/* The pay month (y, m) whose period contains the day. */
+function payMonthOf(key, settings) {
+  const S = Math.min(28, Math.max(1, Math.floor(+policyOf(settings).periodStart || 1)));
+  const [y, m, d] = key.split('-').map(Number);
+  if (S === 1 || d < S) return { y, m };
+  return m === 12 ? { y: y + 1, m: 1 } : { y, m: m + 1 };
+}
+
+/* Standard workdays: the workdays of the week in the pay period (holidays included), or a fixed number. */
 function stdDays(y, m, settings) {
   const mode = settings.work.stdDaysMode;
   if (mode !== 'auto' && +mode > 0) return +mode;
   const wd = workDaysOf(settings);
-  let n = 0;
-  for (let d = 1; d <= daysInMonth(y, m); d++) if (wd.includes(new Date(y, m - 1, d).getDay())) n++;
-  return n;
+  return periodOf(y, m, settings).keys.filter(k => wd.includes(parseKey(k).getDay())).length;
 }
 
 const itemApplies = (it, sal) => sal && (it.when === 'both' || !it.when || it.when === sal.status);
@@ -395,10 +412,11 @@ function ratingFor(P, chosen) {
   return list.find(x => x.id === chosen) || list.find(x => x.id === P.defaultRating) || list[0] || null;
 }
 
-/* Computes a month. days: {'YYYY-MM-DD': rec}. now: {key, min} for today's running total.
-   month: the stored month ({rating}) for monthly inputs. */
+/* Computes a pay month (its pay period). days: {'YYYY-MM-DD': rec}, covering the whole period.
+   now: {key, min} for today's running total. month: the stored month ({rating}) for monthly inputs. */
 function computeMonth(y, m, days, settings, now, month) {
   const std = stdDays(y, m, settings);
+  const period = periodOf(y, m, settings);
   const rows = [];
   const C = contractOf(settings), P = policyOf(settings);
   const rating = ratingFor(P, month && month.rating);
@@ -408,8 +426,7 @@ function computeMonth(y, m, days, settings, now, month) {
     basePay: 0, otPay: 0, total: 0, tripDays: 0, missing: 0, noSalaryDays: 0,
     wfhDays: 0, otPending: 0, lunchDays: 0, t13Cong: 0 };
   const raw = { workPay: 0, holidayPay: 0, leavePay: 0, ot150Pay: 0, ot200Pay: 0, ot300Pay: 0 };
-  for (let d = 1; d <= daysInMonth(y, m); d++) {
-    const key = y + '-' + pad(m) + '-' + pad(d);
+  for (const key of period.keys) {
     const opts = now && now.key === key ? { nowMin: now.min } : null;
     const r = computeDay(key, days[key] || {}, settings, opts);
     const sal = salaryOn(key, C);
@@ -459,7 +476,7 @@ function computeMonth(y, m, days, settings, now, month) {
   t.otPay = t.ot150Pay + t.ot200Pay + t.ot300Pay;
   t.total = t.basePay + t.otPay + t.itemsPay;
   t.wfhCap = P.wfh && P.wfhCapPct > 0 ? Math.floor(std * P.wfhCapPct / 100 + 1e-9) : null;
-  return { y, m, std, rows, totals: t, contract: C, policy: P, rating, deductions: deductionsFor(y, m, rows, t, C) };
+  return { y, m, std, period, rows, totals: t, contract: C, policy: P, rating, deductions: deductionsFor(y, m, rows, t, C) };
 }
 
 /* Annual leave used in a year. monthDays(m) returns that month's {key: rec}. */

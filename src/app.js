@@ -428,18 +428,34 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 /* ---------- TIMESHEET + PAY ---------- */
+/* A pay month may start in the previous calendar month (e.g. 24 Oct – 23 Nov): load and merge both */
+const prevMonth = (y, m) => m === 1 ? [y - 1, 12] : [y, m - 1];
+async function loadPeriod(y, m) {
+  await ensureMonth(y, m);
+  if (periodOf(y, m, settings).start > 1) await ensureMonth(...prevMonth(y, m));
+}
+function periodDays(y, m) {
+  const cur = (months[monthKey(y, m)] || {}).days || {};
+  if (periodOf(y, m, settings).start === 1) return cur;
+  return { ...((months[monthKey(...prevMonth(y, m))] || {}).days || {}), ...cur };
+}
+const periodRangeTxt = M => M.period.start > 1 ? fmtDM(M.period.from) + ' – ' + fmtDM(M.period.to) : '';
 function curMonthCalc() {
   const mo = months[monthKey(view.y, view.m)] || { days: {} };
   const n = new Date();
-  return computeMonth(view.y, view.m, mo.days, settings, { key: todayKey(), min: n.getHours() * 60 + n.getMinutes() }, mo);
+  return computeMonth(view.y, view.m, periodDays(view.y, view.m), settings, { key: todayKey(), min: n.getHours() * 60 + n.getMinutes() }, mo);
 }
 $$('[data-mnav]').forEach(b => b.addEventListener('click', async () => {
   let m = view.m + +b.dataset.mnav, y = view.y;
   if (m < 1) { m = 12; y--; } if (m > 12) { m = 1; y++; }
-  view = { y, m }; await ensureMonth(y, m); settleDays(); renderMonthViews();
+  view = { y, m }; await loadPeriod(y, m); settleDays(); renderMonthViews();
 }));
+/* Show the pay month that contains today (after the policy's period start changes, or at launch) */
+async function viewToday() { view = payMonthOf(todayKey(), settings); await loadPeriod(view.y, view.m); }
 function renderMonthViews() {
-  $$('.month-title').forEach(h => h.textContent = T('month.title', { month: monthName(view.m), year: view.y }));
+  const range = periodOf(view.y, view.m, settings);
+  $$('.month-title').forEach(h => h.innerHTML = esc(T(range.start > 1 ? 'month.titlePeriod' : 'month.title', { month: range.start > 1 && LANG === 'vi' ? view.m : monthName(view.m), year: view.y }))
+    + (range.start > 1 ? `<span class="period-range">${esc(fmtDM(range.from) + ' – ' + fmtDM(range.to))}</span>` : ''));
   const M = curMonthCalc();
   renderMonth(M); renderPay(M);
 }
@@ -498,9 +514,8 @@ function renderMonth(M) {
   tb.querySelectorAll('tbody tr').forEach(tr => tr.addEventListener('click', () => openEdit(tr.dataset.key)));
 }
 $('#addDayBtn').addEventListener('click', () => {
-  const tk = todayKey();
-  const inMonth = tk.startsWith(view.y + '-' + pad(view.m));
-  openEdit(inMonth ? tk : view.y + '-' + pad(view.m) + '-01');
+  const tk = todayKey(), p = periodOf(view.y, view.m, settings);
+  openEdit(p.keys.includes(tk) ? tk : p.from);
 });
 
 function payBreakdown(M) {
@@ -628,7 +643,8 @@ function yearT13(y) {
   let n = 0;
   for (let m = 1; m <= 12; m++) {
     const mo = months[monthKey(y, m)]; if (!mo) continue;
-    n += computeMonth(y, m, mo.days, settings, null, mo).totals.t13Cong;
+    const cal = { ...settings, policy: { ...policyOf(settings), periodStart: 1 } };   // calendar months
+    n += computeMonth(y, m, mo.days, cal, null, mo).totals.t13Cong;
   }
   return n;
 }
@@ -841,6 +857,7 @@ function renderPolicy() {
   $('#polApply').textContent = T('pol.apply'); applyArmed = false;
   $('#polDays').innerHTML = DOW_ORDER.map(d => `<label class="check"><input type="checkbox" data-wd="${d}" ${wd.includes(d) ? 'checked' : ''}> ${esc(dowShort(d))}</label>`).join('');
   $$('[data-wd]').forEach(x => x.onchange = () => readPolicy());
+  $('#polPeriod').value = P.periodStart || 1;
   $('#polDayPay').value = P.dayPay; $('#polOtBasis').value = P.otBasis; $('#polLeavePay').value = P.leavePay;
   $('#polLeaveUnit').value = String(+P.leaveUnitHours >= 4 ? 4 : 1);
   $('#polOtApproval').checked = !!P.otApproval; $('#polWfh').checked = !!P.wfh; $('#polT13').checked = !!P.t13;
@@ -873,11 +890,13 @@ function readPolicy() {
   const wd = $$('[data-wd]').filter(x => x.checked).map(x => +x.dataset.wd);
   if (!wd.length) { toast(T('pol.needDay')); renderPolicy(); return; }
   settings.work.workDays = wd.sort();
-  settings.policy = { ...P, preset: 'custom',
+  const periodStart = Math.min(28, Math.max(1, Math.floor(num($('#polPeriod').value, 1))));
+  const periodChanged = periodStart !== (+P.periodStart || 1);
+  settings.policy = { ...P, preset: 'custom', periodStart,
     dayPay: $('#polDayPay').value, otBasis: $('#polOtBasis').value, leavePay: $('#polLeavePay').value,
     leaveUnitHours: +$('#polLeaveUnit').value, otApproval: $('#polOtApproval').checked, wfh: $('#polWfh').checked,
     t13: $('#polT13').checked, wfhCapPct: Math.min(100, Math.max(0, num($('#polWfhCap').value, 0))) };
-  afterPolicy(T('set.saved'));
+  if (periodChanged) { viewToday().then(() => afterPolicy(T('set.saved'))); } else afterPolicy(T('set.saved'));
   startGps();
 }
 function readRatings() {
@@ -896,7 +915,7 @@ $('#rtAdd').addEventListener('click', () => {
   afterPolicy();
 });
 function afterPolicy(msg) { saveSettings(); renderPolicy(); renderMonthViews(); renderToday(); if (msg) toast(msg); }
-['#polDayPay', '#polOtBasis', '#polLeavePay', '#polLeaveUnit', '#polOtApproval', '#polWfh', '#polT13', '#polWfhCap']
+['#polPeriod', '#polDayPay', '#polOtBasis', '#polLeavePay', '#polLeaveUnit', '#polOtApproval', '#polWfh', '#polT13', '#polWfhCap']
   .forEach(sel => $(sel).addEventListener('change', readPolicy));
 $('#polApply').addEventListener('click', () => {
   const id = $('#polPreset').value, pre = POLICY_PRESETS[id];
@@ -904,7 +923,8 @@ $('#polApply').addEventListener('click', () => {
   if (!applyArmed) { applyArmed = true; $('#polApply').textContent = T('pol.applyConfirm'); return; }
   settings.work = { ...settings.work, ...pre.work, workDays: pre.work.workDays.slice() };
   settings.policy = pre.policy();
-  editItemId = null; saveSettings(); renderSettings(); renderMonthViews(); renderToday(); startGps();
+  editItemId = null; saveSettings(); renderSettings(); startGps();
+  viewToday().then(() => { renderMonthViews(); renderToday(); });
   toast(T('pol.applied'));
 });
 $('#polPreset').addEventListener('change', () => { applyArmed = false; $('#polApply').textContent = T('pol.apply'); });
@@ -954,7 +974,8 @@ $('#polFile').addEventListener('change', async e => {
     const work = {}; POLICY_WORK_KEYS.forEach(k => { if (data.work && data.work[k] != null) work[k] = data.work[k]; });
     settings.work = { ...settings.work, ...work };
     settings.policy = { ...POLICY_PRESETS.gross.policy(), ...data.policy };
-    editItemId = null; saveSettings(); renderSettings(); renderMonthViews(); renderToday(); startGps();
+    editItemId = null; saveSettings(); renderSettings(); startGps();
+    await viewToday(); renderMonthViews(); renderToday();
     toast(T('pol.imported'));
   } catch (err) { toast(T('pol.importBad')); }
 });
@@ -1056,7 +1077,7 @@ $('#xlsxBtn').addEventListener('click', async () => {
     const M = curMonthCalc(), t = M.totals, h = reportHeader(M), b = h.b;
     const C = k => T('x.col.' + k);
     const aoa = [
-      [T('x.title', { month: monthName(view.m).toUpperCase(), year: view.y })],
+      [T('x.title', { month: monthName(view.m).toUpperCase(), year: view.y }) + (periodRangeTxt(M) ? ' (' + periodRangeTxt(M) + ')' : '')],
       [T('x.employee'), settings.name || '', '', T('x.status'), h.statusTxt, '', T('x.salary'), h.salaryTxt, '', T('x.otBase'), h.otBaseTxt],
       [T('x.std'), M.std, '', T('x.hourly'), b.single ? Math.round(b.otBase / M.std / 8) : T('x.hourlyPerDay'), '', T('x.exportedAt'), new Date().toLocaleString(LOCALE())],
       [],
@@ -1116,7 +1137,7 @@ $('#pdfBtn').addEventListener('click', async () => {
     const mt = { month: monthInline(view.m), year: view.y };
     const sumRow = (label, qty, amount) => `<tr><td>${esc(label)}</td><td class="n" style="white-space:nowrap">${esc(qty)}</td><td class="n">${fmtNum(amount)}</td></tr>`;
     const pages = [
-      `<div class="pdf-page"><h1>${esc(T('pdf.title', mt))}</h1>${meta}<table>${head}${chunks[0].map(row).join('')}</table>${foot(1)}</div>`,
+      `<div class="pdf-page"><h1>${esc(T('pdf.title', mt) + (periodRangeTxt(M) ? ' · ' + periodRangeTxt(M) : ''))}</h1>${meta}<table>${head}${chunks[0].map(row).join('')}</table>${foot(1)}</div>`,
       `<div class="pdf-page"><table>${head}${chunks[1].map(row).join('')}<tr><th colspan="6">${esc(T('col.total'))}</th><th class="n">${fmtH(t.workedMin)}</th><th class="n">${fmtNum(round2(t.cong + t.paidCong + t.paidLeave))}</th><th class="n">${fmtH(t.ot150)}</th><th class="n">${fmtH(t.ot200)}</th><th class="n">${fmtH(t.ot300)}</th><th>${esc(T('month.days', { n: t.tripDays }))}</th><th class="n">${fmtNum(t.total)}</th><th></th></tr></table>${foot(2)}</div>`,
       `<div class="pdf-page"><h1>${esc(T('pdf.payTitle', mt))}</h1>${meta}
         <table style="width:100%;font-size:12px">
@@ -1200,6 +1221,7 @@ async function boot() {
   if (settings.lang) { try { localStorage.setItem('olive:lang', LANG); } catch (e) {} }
   const n = new Date();
   await ensureMonth(n.getFullYear(), n.getMonth() + 1);
+  await viewToday();
   ready = true;
   settleDays();
   setStoreChip(); renderAll(); loadRt(); loadGeoRt(); startGps();

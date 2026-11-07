@@ -115,6 +115,9 @@
           <label class="f"><span data-i18n="pol.preset">Preset</span><select id="polPreset"><option value="gross" data-i18n="pol.preset.gross">Mon–Sat, day pay on gross salary</option><option value="office" data-i18n="pol.preset.office">Mon–Fri, title salary + performance + daily allowances</option><option value="custom" data-i18n="pol.preset.custom">Custom</option></select></label>
           <div class="f" style="justify-content:flex-end"><button class="btn" id="polApply" data-i18n="pol.apply">Apply preset</button></div>
         </div>
+        <div class="fields" style="margin-top:12px">
+          <label class="f"><span data-i18n="pol.period">Pay period starts on day</span><input type="number" min="1" max="28" step="1" id="polPeriod" inputmode="numeric"><span class="hint" data-i18n="pol.periodHint">1 = calendar month. 24 = from the 24th of the previous month to the 23rd</span></label>
+        </div>
         <h4 class="ct-h" data-i18n="pol.days">Workdays of the week</h4>
         <div class="row" id="polDays" style="flex-wrap:wrap;gap:8px 14px"></div>
         <h4 class="ct-h" data-i18n="pol.pay">Pay rules</h4>
